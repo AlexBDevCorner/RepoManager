@@ -69,13 +69,37 @@ public sealed class GitCommandRunnerTests : IDisposable
         // Assert
         result.Success.Should().BeFalse();
         result.ExitCode.Should().NotBe(0);
+        result.StandardError.Should().NotBeNullOrWhiteSpace();
     }
 
     [Fact]
-    public async Task ExecuteAsync_Cancellation_KillsDaemonAndThrows()
+    public async Task ExecuteAsync_AlreadyCancelled_ThrowsWithoutStartingGit()
+    {
+        // Arrange: a working directory that could never host a process
+        // start, combined with an already-cancelled token.
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        var missingDirectory = Path.Combine(_workingDirectory, "does-not-exist");
+
+        // Act
+        var act = () => _runner.ExecuteAsync(
+            missingDirectory, ["--version"], cancellation.Token);
+
+        // Assert: cancellation is observed before git.exe is ever launched —
+        // without the guard this would throw Win32Exception for the bad
+        // working directory instead.
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Cancellation_KillsGitProcessAndThrows()
     {
         // Arrange: git daemon blocks until killed, so it is a
         // deterministic stand-in for a long-running git process.
+        // Note: this verifies the git process itself is terminated
+        // (its listener port closes). Full descendant-tree verification
+        // is out of scope until the Task 5 test infrastructure lands.
         var port = GetFreeTcpPort();
 
         using var cancellation = new CancellationTokenSource();

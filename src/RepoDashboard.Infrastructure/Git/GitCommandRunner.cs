@@ -13,6 +13,9 @@ public sealed class GitCommandRunner : IGitCommandRunner
         ArgumentException.ThrowIfNullOrWhiteSpace(repositoryPath);
         ArgumentNullException.ThrowIfNull(arguments);
 
+        // Never launch git.exe for an already-cancelled operation.
+        cancellationToken.ThrowIfCancellationRequested();
+
         var startInfo = new ProcessStartInfo
         {
             FileName = "git",
@@ -65,6 +68,12 @@ public sealed class GitCommandRunner : IGitCommandRunner
             if (!process.HasExited)
             {
                 process.Kill(entireProcessTree: true);
+
+                // Kill is fire-and-forget: confirm the git process is gone
+                // before returning, so callers never race index.lock/handles.
+                // CancellationToken.None is intentional — cleanup itself
+                // must not be cancellable.
+                await process.WaitForExitAsync(CancellationToken.None);
             }
 
             throw;
