@@ -3,7 +3,7 @@
 ## Solution layout
 
 ```text
-RepoDashboard.sln
+RepoDashboard.slnx
 
 src/
     RepoDashboard.App/
