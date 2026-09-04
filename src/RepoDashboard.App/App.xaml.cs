@@ -1,13 +1,57 @@
-﻿using System.Configuration;
-using System.Data;
-using System.Windows;
+﻿using System.Windows;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
+using RepoDashboard.App.ViewModels;
 
 namespace RepoDashboard.App;
 
 /// <summary>
-/// Interaction logic for App.xaml
+/// Application composition root. All services are wired here;
+/// ViewModels and views receive dependencies via constructor injection.
 /// </summary>
 public partial class App : Application
 {
-}
+    private IHost? _host;
 
+    protected override async void OnStartup(
+        StartupEventArgs e)
+    {
+        _host = Host.CreateDefaultBuilder()
+            .ConfigureServices(services =>
+            {
+                // Git and application services (Tasks 3+) are registered here
+                // as they are implemented, e.g.:
+                // services.AddSingleton<IGitCommandRunner, GitCommandRunner>();
+                // services.AddSingleton<IRepositoryConfigurationStore, JsonRepositoryConfigurationStore>();
+                // services.AddSingleton<IRepositoryInspector, RepositoryInspector>();
+                // services.AddSingleton<IRepositoryFetcher, RepositoryFetcher>();
+                // services.AddSingleton<IRepositoryUpdater, RepositoryUpdater>();
+                // services.AddSingleton<IUpdateEligibilityClassifier, UpdateEligibilityClassifier>();
+                // services.AddSingleton<IRepositoryDashboardService, RepositoryDashboardService>();
+
+                services.AddSingleton<MainWindowViewModel>();
+                services.AddSingleton<MainWindow>();
+            })
+            .Build();
+
+        await _host.StartAsync();
+
+        _host.Services
+            .GetRequiredService<MainWindow>()
+            .Show();
+
+        base.OnStartup(e);
+    }
+
+    protected override async void OnExit(
+        ExitEventArgs e)
+    {
+        if (_host is not null)
+        {
+            await _host.StopAsync();
+            _host.Dispose();
+        }
+
+        base.OnExit(e);
+    }
+}
