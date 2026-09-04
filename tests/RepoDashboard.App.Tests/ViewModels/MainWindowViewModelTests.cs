@@ -246,6 +246,20 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task RefreshAll_reports_partial_failure_count()
+    {
+        var dashboard = new FakeDashboard([Item("Store"), FailedItem("Broken")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker());
+        await sut.InitializeAsync();
+
+        await sut.RefreshAllCommand.ExecuteAsync(null);
+
+        sut.StatusText.Should().Be(
+            "Refreshed 1 of 2 repositories. 1 failed.");
+    }
+
+    [Fact]
     public async Task RefreshAll_keeps_failed_row_with_error_and_selection()
     {
         var dashboard = new FakeDashboard([Item("Store"), FailedItem("Broken")]);

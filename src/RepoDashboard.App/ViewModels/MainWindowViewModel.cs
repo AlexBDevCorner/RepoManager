@@ -234,7 +234,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 await _dashboard.RefreshAllAsync(cancellationToken);
 
             SyncRows(repositories);
-            StatusText = $"Refreshed {repositories.Count} repositories.";
+
+            var failedCount = repositories.Count(
+                r => r.InspectionError is not null);
+            var successfulCount = repositories.Count - failedCount;
+
+            StatusText = failedCount == 0
+                ? $"Refreshed {successfulCount} repositories."
+                : $"Refreshed {successfulCount} of {repositories.Count} " +
+                  $"repositories. {failedCount} failed.";
         }
         catch (OperationCanceledException)
         {
