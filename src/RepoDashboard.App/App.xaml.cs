@@ -24,6 +24,7 @@ public partial class App : Application
                 // Git and application services (Tasks 3+) are registered here
                 // as they are implemented, e.g.:
                 services.AddSingleton<IGitCommandRunner, GitCommandRunner>();
+                services.AddSingleton<IGitEnvironment, GitEnvironment>();
                 // services.AddSingleton<IRepositoryConfigurationStore, JsonRepositoryConfigurationStore>();
                 // services.AddSingleton<IRepositoryInspector, RepositoryInspector>();
                 // services.AddSingleton<IRepositoryFetcher, RepositoryFetcher>();
@@ -37,6 +38,20 @@ public partial class App : Application
             .Build();
 
         await _host.StartAsync();
+
+        var viewModel = _host.Services
+            .GetRequiredService<MainWindowViewModel>();
+
+        await viewModel.InitializeAsync();
+
+        if (!viewModel.IsGitAvailable)
+        {
+            MessageBox.Show(
+                viewModel.GitStatusText,
+                "RepoDashboard — Git not found",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
 
         _host.Services
             .GetRequiredService<MainWindow>()

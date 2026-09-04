@@ -1,4 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
+using RepoDashboard.Core.Git;
 
 namespace RepoDashboard.App.ViewModels;
 
@@ -10,4 +11,29 @@ namespace RepoDashboard.App.ViewModels;
 /// </summary>
 public sealed partial class MainWindowViewModel : ObservableObject
 {
+    private readonly IGitEnvironment _gitEnvironment;
+
+    [ObservableProperty]
+    private bool _isGitAvailable;
+
+    [ObservableProperty]
+    private string _gitStatusText = "Checking Git…";
+
+    public MainWindowViewModel(IGitEnvironment gitEnvironment)
+    {
+        ArgumentNullException.ThrowIfNull(gitEnvironment);
+        _gitEnvironment = gitEnvironment;
+    }
+
+    public async Task InitializeAsync(
+        CancellationToken cancellationToken = default)
+    {
+        var info = await _gitEnvironment.CheckAsync(cancellationToken);
+
+        IsGitAvailable = info.Available;
+
+        GitStatusText = info.Available
+            ? $"Git {info.Version} detected"
+            : info.Error ?? "Git status unknown.";
+    }
 }
