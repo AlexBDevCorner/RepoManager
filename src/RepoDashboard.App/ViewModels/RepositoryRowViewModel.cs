@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using RepoDashboard.Core.Dashboard;
 using RepoDashboard.Core.Models;
+using RepoDashboard.Core.Sync;
 
 namespace RepoDashboard.App.ViewModels;
 
@@ -52,6 +53,21 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
 
         RepositoryId = item.Configuration.Id;
         Name = item.Configuration.Name;
+
+        // A failed inspection keeps the row visible but shows no Git state:
+        // the snapshot carries identity only, so render the error instead.
+        if (item.InspectionError is not null)
+        {
+            Branch = "—";
+            WorktreeStatus = "Error";
+            UpstreamStatus = "—";
+            DefaultBranchStatus = "—";
+            UpdateStatus = UpdateEligibility.Unknown.ToString();
+            Explanation = item.InspectionError;
+            LastFetchText = FormatLastFetch(item.LastSuccessfulFetch);
+            return;
+        }
+
         Branch = FormatBranch(item.Snapshot);
         WorktreeStatus = FormatWorktreeStatus(item.Snapshot);
         UpstreamStatus = FormatDivergence(item.Snapshot.UpstreamDivergence);

@@ -139,6 +139,12 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService
         await _store.SaveAsync(remaining, cancellationToken);
     }
 
+    /// <summary>
+    /// Inspects every repository without letting one failure abort the rest:
+    /// a failed repository operation never aborts an all-repositories operation.
+    /// Failures become failed items (never dropped, so the UI keeps the row)
+    /// except for cancellation, which still aborts.
+    /// </summary>
     private async Task<IReadOnlyList<RepositoryDashboardItem>> InspectAllAsync(
         IReadOnlyList<RepositoryConfiguration> configurations,
         CancellationToken cancellationToken)
@@ -147,7 +153,18 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService
 
         foreach (var configuration in configurations)
         {
-            items.Add(await InspectAsync(configuration, cancellationToken));
+            try
+            {
+                items.Add(await InspectAsync(configuration, cancellationToken));
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                items.Add(CreateFailedItem(configuration, ex.Message));
+            }
         }
 
         return items;
@@ -162,6 +179,31 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService
 
         return CreateItem(configuration, snapshot);
     }
+
+    /// <summary>
+    /// Builds a failed item without running the classifier: the snapshot
+    /// carries only identity (id + path) because its Git state is unknown,
+    /// and the decision is <c>Unknown</c> with the raw error message.
+    /// </summary>
+    private static RepositoryDashboardItem CreateFailedItem(
+        RepositoryConfiguration configuration,
+        string errorMessage) =>
+        new()
+        {
+            Configuration = configuration,
+            Snapshot = new RepositorySnapshot
+            {
+                RepositoryId = configuration.Id,
+                Path = configuration.Path,
+                InspectedAt = DateTimeOffset.UtcNow
+            },
+            UpdateDecision = new UpdateDecision(
+                UpdateEligibility.Unknown, errorMessage),
+            InspectionError = errorMessage,
+
+            // Fetch does not exist yet (Task 24+); nothing has ever been fetched.
+            LastSuccessfulFetch = null
+        };
 
     private RepositoryDashboardItem CreateItem(
         RepositoryConfiguration configuration,

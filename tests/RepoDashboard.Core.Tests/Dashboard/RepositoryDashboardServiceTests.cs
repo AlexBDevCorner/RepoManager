@@ -200,6 +200,37 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task RefreshAllAsync_SingleFailure_DoesNotAbortOthers()
+    {
+        var first = Config("First", """C:\Source\Repos\First""");
+        var broken = Config("Broken", """C:\Source\Repos\Broken""");
+        var third = Config("Third", """C:\Source\Repos\Third""");
+        var store = new InMemoryStore([first, broken, third]);
+        var inspector = new StubInspector(c =>
+            c.Name == "Broken"
+                ? throw new InvalidOperationException("git status unexpectedly failed")
+                : UpToDateSnapshot(c));
+        var sut = CreateSut(store, inspector);
+
+        var items = await sut.RefreshAllAsync(CancellationToken.None);
+
+        items.Should().HaveCount(3);
+        inspector.Calls.Should().Be(3);
+
+        var failed = items[1];
+        failed.Configuration.Name.Should().Be("Broken");
+        failed.InspectionError.Should().Contain("git status unexpectedly failed");
+        failed.UpdateDecision.Eligibility.Should().Be(UpdateEligibility.Unknown);
+        failed.UpdateDecision.Explanation.Should().Be(failed.InspectionError);
+        failed.Snapshot.RepositoryId.Should().Be(broken.Id);
+
+        items[0].InspectionError.Should().BeNull();
+        items[2].InspectionError.Should().BeNull();
+        items[2].UpdateDecision.Eligibility
+            .Should().Be(UpdateEligibility.AlreadyUpToDate);
+    }
+
+    [Fact]
     public async Task AddAsync_ValidGitDirectory_PersistsAndReturnsItem()
     {
         var directory = CreateTempDirectory();

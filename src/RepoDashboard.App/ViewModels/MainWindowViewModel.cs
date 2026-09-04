@@ -23,12 +23,23 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public ObservableCollection<RepositoryRowViewModel> Repositories { get; } = [];
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RemoveCommand))]
     private RepositoryRowViewModel? _selectedRepository;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(LoadCommand))]
+    [NotifyCanExecuteChangedFor(nameof(AddCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshAllCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RemoveCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(LoadCommand))]
+    [NotifyCanExecuteChangedFor(nameof(AddCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshAllCommand))]
     private bool _isGitAvailable;
 
     [ObservableProperty]
@@ -61,10 +72,45 @@ public sealed partial class MainWindowViewModel : ObservableObject
             ? $"Git {info.Version} detected"
             : info.Error ?? "Git status unknown.";
 
+        // Without git.exe every inspection would fail with obscure process
+        // errors, so stop here with one clear status instead.
+        if (!IsGitAvailable)
+        {
+            StatusText = "Repository inspection is unavailable until Git is installed.";
+            return;
+        }
+
         await LoadAsync(cancellationToken);
     }
 
-    [RelayCommand]
+    private bool CanLoad() => IsGitAvailable && !IsBusy;
+
+    private bool CanAdd() => IsGitAvailable && !IsBusy;
+
+    private bool CanRefresh() =>
+        IsGitAvailable && !IsBusy && SelectedRepository is not null;
+
+    private bool CanRefreshAll() => IsGitAvailable && !IsBusy;
+
+    // Remove edits only repositories.json, so it stays available without Git.
+    private bool CanRemove() => !IsBusy && SelectedRepository is not null;
+
+    /// <summary>
+    /// Guards direct invocations (commands bypass <c>CanExecute</c> when
+    /// executed programmatically); the UI additionally disables the button.
+    /// </summary>
+    private bool RequireGit()
+    {
+        if (IsGitAvailable)
+        {
+            return true;
+        }
+
+        StatusText = "Repository inspection is unavailable until Git is installed.";
+        return false;
+    }
+
+    [RelayCommand(CanExecute = nameof(CanLoad))]
     private async Task LoadAsync(
         CancellationToken cancellationToken)
     {
@@ -73,7 +119,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        if (!RequireGit())
+        {
+            return;
+        }
+
         IsBusy = true;
+        StatusText = "Loading repositories…";
 
         try
         {
@@ -110,20 +162,25 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// Re-reads local Git information for the selected repository.
     /// Performs no network operation.
     /// </summary>
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanRefresh))]
     private async Task RefreshAsync(
         CancellationToken cancellationToken)
     {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        if (!RequireGit())
+        {
+            return;
+        }
+
         var selected = SelectedRepository;
 
         if (selected is null)
         {
             StatusText = "Select a repository first.";
-            return;
-        }
-
-        if (IsBusy)
-        {
             return;
         }
 
@@ -155,11 +212,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// Re-reads local Git information for every repository.
     /// Performs no network operation.
     /// </summary>
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanRefreshAll))]
     private async Task RefreshAllAsync(
         CancellationToken cancellationToken)
     {
         if (IsBusy)
+        {
+            return;
+        }
+
+        if (!RequireGit())
         {
             return;
         }
@@ -188,11 +250,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanAdd))]
     private async Task AddAsync(
         CancellationToken cancellationToken)
     {
         if (IsBusy)
+        {
+            return;
+        }
+
+        if (!RequireGit())
         {
             return;
         }
@@ -235,7 +302,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanRemove))]
     private async Task RemoveAsync(
         CancellationToken cancellationToken)
     {

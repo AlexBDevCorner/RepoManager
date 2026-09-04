@@ -49,6 +49,13 @@ public partial class App : Application
         var viewModel = _host.Services
             .GetRequiredService<MainWindowViewModel>();
 
+        // Show the window before inspecting repositories: inspection runs
+        // multiple Git commands per repository, so awaiting it first would
+        // look like the application did not launch at all.
+        _host.Services
+            .GetRequiredService<MainWindow>()
+            .Show();
+
         await viewModel.InitializeAsync();
 
         if (!viewModel.IsGitAvailable)
@@ -59,10 +66,6 @@ public partial class App : Application
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }
-
-        _host.Services
-            .GetRequiredService<MainWindow>()
-            .Show();
 
         base.OnStartup(e);
     }

@@ -120,6 +120,41 @@ public sealed class RepositoryRowViewModelTests
     }
 
     [Fact]
+    public void Failed_inspection_renders_error_row()
+    {
+        var configuration = new RepositoryConfiguration
+        {
+            Id = Guid.NewGuid(),
+            Name = "Broken",
+            Path = """C:\Source\Repos\Broken"""
+        };
+
+        const string error = "git status unexpectedly failed";
+
+        var row = new RepositoryRowViewModel(new RepositoryDashboardItem
+        {
+            Configuration = configuration,
+            Snapshot = new RepositorySnapshot
+            {
+                RepositoryId = configuration.Id,
+                Path = configuration.Path,
+                InspectedAt = DateTimeOffset.UtcNow
+            },
+            UpdateDecision = new UpdateDecision(
+                UpdateEligibility.Unknown, error),
+            InspectionError = error
+        });
+
+        row.Name.Should().Be("Broken");
+        row.Branch.Should().Be("—");
+        row.WorktreeStatus.Should().Be("Error");
+        row.UpstreamStatus.Should().Be("—");
+        row.DefaultBranchStatus.Should().Be("—");
+        row.UpdateStatus.Should().Be(nameof(UpdateEligibility.Unknown));
+        row.Explanation.Should().Be(error);
+    }
+
+    [Fact]
     public void Update_refreshes_properties_in_place()
     {
         var row = new RepositoryRowViewModel(Item(branch: "main"));
