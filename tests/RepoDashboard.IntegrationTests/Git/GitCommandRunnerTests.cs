@@ -23,22 +23,7 @@ public sealed class GitCommandRunnerTests : IDisposable
 
     public void Dispose()
     {
-        for (var attempt = 0; attempt < 3; attempt++)
-        {
-            try
-            {
-                Directory.Delete(_workingDirectory, recursive: true);
-                return;
-            }
-            catch (IOException) when (attempt < 2)
-            {
-                Thread.Sleep(100);
-            }
-            catch (UnauthorizedAccessException) when (attempt < 2)
-            {
-                Thread.Sleep(100);
-            }
-        }
+        TestDirectories.DeleteRecursively(_workingDirectory);
     }
 
     [Fact]
