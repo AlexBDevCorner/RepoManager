@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RepoDashboard.App/RepoDashboard.App.csproj" />
+    <Project Path="src/RepoDashboard.Core/RepoDashboard.Core.csproj" />
+    <Project Path="src/RepoDashboard.Infrastructure/RepoDashboard.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RepoDashboard.Core.Tests/RepoDashboard.Core.Tests.csproj" />
+    <Project Path="tests/RepoDashboard.IntegrationTests/RepoDashboard.IntegrationTests.csproj" />
+  </Folder>
+</Solution>
