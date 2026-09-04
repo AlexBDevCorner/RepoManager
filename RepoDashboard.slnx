@@ -5,6 +5,7 @@
     <Project Path="src/RepoDashboard.Infrastructure/RepoDashboard.Infrastructure.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/RepoDashboard.App.Tests/RepoDashboard.App.Tests.csproj" />
     <Project Path="tests/RepoDashboard.Core.Tests/RepoDashboard.Core.Tests.csproj" />
     <Project Path="tests/RepoDashboard.IntegrationTests/RepoDashboard.IntegrationTests.csproj" />
   </Folder>

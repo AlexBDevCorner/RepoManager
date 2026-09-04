@@ -1,7 +1,9 @@
 ﻿using System.Windows;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using RepoDashboard.App.Services;
 using RepoDashboard.App.ViewModels;
+using RepoDashboard.Core.Dashboard;
 using RepoDashboard.Core.Git;
 using RepoDashboard.Core.Repositories;
 using RepoDashboard.Core.Sync;
@@ -32,9 +34,10 @@ public partial class App : Application
                 services.AddSingleton<IDivergenceCalculator, DivergenceCalculator>();
                 services.AddSingleton<IRepositoryInspector, RepositoryInspector>();
                 services.AddSingleton<IUpdateEligibilityClassifier, UpdateEligibilityClassifier>();
+                services.AddSingleton<IRepositoryDashboardService, RepositoryDashboardService>();
+                services.AddSingleton<IFolderPickerService, FolderPickerService>();
                 // services.AddSingleton<IRepositoryFetcher, RepositoryFetcher>();
                 // services.AddSingleton<IRepositoryUpdater, RepositoryUpdater>();
-                // services.AddSingleton<IRepositoryDashboardService, RepositoryDashboardService>();
 
                 services.AddSingleton<MainWindowViewModel>();
                 services.AddSingleton<MainWindow>();

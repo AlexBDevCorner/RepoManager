@@ -5,10 +5,78 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:RepoDashboard.App"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800">
-    <Grid>
-        <TextBlock Text="{Binding GitStatusText}"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center" />
-    </Grid>
+        Title="Repo Dashboard" Height="600" Width="1000">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
+    </Window.Resources>
+    <DockPanel>
+        <ToolBar DockPanel.Dock="Top">
+            <Button Content="+ Add Repository"
+                    Command="{Binding AddCommand}"
+                    Margin="4,0" />
+            <Separator />
+            <Button Content="Remove from dashboard"
+                    Command="{Binding RemoveCommand}"
+                    Margin="4,0" />
+            <Separator />
+            <Button Content="Refresh"
+                    Command="{Binding RefreshCommand}"
+                    Margin="4,0" />
+            <Button Content="Refresh All"
+                    Command="{Binding RefreshAllCommand}"
+                    Margin="4,0" />
+        </ToolBar>
+
+        <StatusBar DockPanel.Dock="Bottom">
+            <StatusBarItem>
+                <TextBlock Text="{Binding GitStatusText}" />
+            </StatusBarItem>
+            <Separator />
+            <StatusBarItem>
+                <TextBlock Text="{Binding StatusText}" />
+            </StatusBarItem>
+            <StatusBarItem HorizontalAlignment="Right">
+                <ProgressBar IsIndeterminate="True"
+                             Width="120" Height="14"
+                             Visibility="{Binding IsBusy, Converter={StaticResource BooleanToVisibilityConverter}}" />
+            </StatusBarItem>
+        </StatusBar>
+
+        <DataGrid ItemsSource="{Binding Repositories}"
+                  SelectedItem="{Binding SelectedRepository, Mode=TwoWay}"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  SelectionMode="Single">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Repository"
+                                    Binding="{Binding Name}"
+                                    Width="*" />
+                <DataGridTextColumn Header="Branch"
+                                    Binding="{Binding Branch}"
+                                    Width="*" />
+                <DataGridTextColumn Header="Changes"
+                                    Binding="{Binding WorktreeStatus}"
+                                    Width="Auto" />
+                <DataGridTextColumn Header="Tracking"
+                                    Binding="{Binding UpstreamStatus}"
+                                    Width="Auto" />
+                <DataGridTextColumn Header="Vs Default"
+                                    Binding="{Binding DefaultBranchStatus}"
+                                    Width="Auto" />
+                <DataGridTextColumn Header="Status"
+                                    Binding="{Binding UpdateStatus}"
+                                    Width="Auto" />
+                <DataGridTextColumn Header="Last Fetch"
+                                    Binding="{Binding LastFetchText}"
+                                    Width="Auto" />
+            </DataGrid.Columns>
+            <DataGrid.RowDetailsTemplate>
+                <DataTemplate>
+                    <TextBlock Text="{Binding Explanation}"
+                               Margin="8,2"
+                               TextWrapping="Wrap" />
+                </DataTemplate>
+            </DataGrid.RowDetailsTemplate>
+        </DataGrid>
+    </DockPanel>
 </Window>
