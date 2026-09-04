@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using RepoDashboard.Core.Git;
 
@@ -67,8 +68,22 @@ public sealed class GitCommandRunner : IGitCommandRunner
         {
             if (!process.HasExited)
             {
-                process.Kill(entireProcessTree: true);
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch (InvalidOperationException) when (process.HasExited)
+                {
+                    // Process exited between HasExited and Kill.
+                }
+                catch (Win32Exception) when (process.HasExited)
+                {
+                    // Process finished while Kill was being requested.
+                }
+            }
 
+            if (!process.HasExited)
+            {
                 // Kill is fire-and-forget: confirm the git process is gone
                 // before returning, so callers never race index.lock/handles.
                 // CancellationToken.None is intentional — cleanup itself
