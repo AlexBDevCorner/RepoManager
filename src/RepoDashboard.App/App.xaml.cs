@@ -2,6 +2,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using RepoDashboard.App.ViewModels;
+using RepoDashboard.Core.Git;
+using RepoDashboard.Infrastructure.Git;
 
 namespace RepoDashboard.App;
 
@@ -21,7 +23,7 @@ public partial class App : Application
             {
                 // Git and application services (Tasks 3+) are registered here
                 // as they are implemented, e.g.:
-                // services.AddSingleton<IGitCommandRunner, GitCommandRunner>();
+                services.AddSingleton<IGitCommandRunner, GitCommandRunner>();
                 // services.AddSingleton<IRepositoryConfigurationStore, JsonRepositoryConfigurationStore>();
                 // services.AddSingleton<IRepositoryInspector, RepositoryInspector>();
                 // services.AddSingleton<IRepositoryFetcher, RepositoryFetcher>();
