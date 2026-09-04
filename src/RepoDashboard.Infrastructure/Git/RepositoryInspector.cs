@@ -175,9 +175,15 @@ public sealed class RepositoryInspector : IRepositoryInspector
         string repositoryPath,
         CancellationToken cancellationToken)
     {
+        // --no-optional-locks (a global option, so it comes first) stops
+        // status from refreshing and rewriting .git/index. The inspector is
+        // read-only: it must neither mutate state nor take index.lock, which
+        // could contend with the user's own Git operations during
+        // background refresh. Detection itself is unaffected — the index
+        // write is only a stat-cache optimisation.
         var result = await _runner.ExecuteAsync(
             repositoryPath,
-            ["status", "--porcelain=v2"],
+            ["--no-optional-locks", "status", "--porcelain=v2"],
             cancellationToken);
 
         if (!result.Success)

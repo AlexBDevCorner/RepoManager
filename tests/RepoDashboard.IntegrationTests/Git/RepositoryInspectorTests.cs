@@ -497,15 +497,28 @@ public sealed class RepositoryInspectorTests
         var repo = await factory.CloneAsync(remote, "repo");
         await factory.FetchAsync(repo);
 
+        // Force the worktree stat information to differ from the index's
+        // cached stat data without changing any contents: this gives a plain
+        // git status a reason to refresh and rewrite .git/index, so the
+        // index comparison below genuinely guards inspector read-onlyness.
+        var trackedFile = Path.Combine(repo, "a.txt");
+        File.SetLastWriteTimeUtc(trackedFile, DateTime.UtcNow.AddMinutes(1));
+
         var refsBefore = await OutputAsync(repo, "for-each-ref");
         var fetchHeadPath = Path.Combine(repo, ".git", "FETCH_HEAD");
         var fetchHeadBefore = await File.ReadAllTextAsync(fetchHeadPath);
+        var indexPath = Path.Combine(repo, ".git", "index");
+        var indexBefore = await File.ReadAllBytesAsync(indexPath);
 
         // Act
-        await inspector.InspectAsync(ConfigFor(repo), CancellationToken.None);
+        var snapshot = await inspector.InspectAsync(ConfigFor(repo), CancellationToken.None);
 
-        // Assert: the inspector only reads — refs and fetched state are intact.
+        // Assert: the inspector only reads — refs, fetched state and the
+        // index are intact. The tree still reports clean: only the timestamp
+        // changed, so there is nothing to update.
+        snapshot.IsDirty.Should().BeFalse();
         (await OutputAsync(repo, "for-each-ref")).Should().Be(refsBefore);
         (await File.ReadAllTextAsync(fetchHeadPath)).Should().Be(fetchHeadBefore);
+        (await File.ReadAllBytesAsync(indexPath)).Should().Equal(indexBefore);
     }
 }
