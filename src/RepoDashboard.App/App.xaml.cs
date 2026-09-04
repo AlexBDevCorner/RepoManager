@@ -3,6 +3,8 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using RepoDashboard.App.ViewModels;
 using RepoDashboard.Core.Git;
+using RepoDashboard.Core.Repositories;
+using RepoDashboard.Infrastructure.Configuration;
 using RepoDashboard.Infrastructure.Git;
 
 namespace RepoDashboard.App;
@@ -25,8 +27,9 @@ public partial class App : Application
                 // as they are implemented, e.g.:
                 services.AddSingleton<IGitCommandRunner, GitCommandRunner>();
                 services.AddSingleton<IGitEnvironment, GitEnvironment>();
-                // services.AddSingleton<IRepositoryConfigurationStore, JsonRepositoryConfigurationStore>();
-                // services.AddSingleton<IRepositoryInspector, RepositoryInspector>();
+                services.AddSingleton<IRepositoryConfigurationStore, JsonRepositoryConfigurationStore>();
+                services.AddSingleton<IDivergenceCalculator, DivergenceCalculator>();
+                services.AddSingleton<IRepositoryInspector, RepositoryInspector>();
                 // services.AddSingleton<IRepositoryFetcher, RepositoryFetcher>();
                 // services.AddSingleton<IRepositoryUpdater, RepositoryUpdater>();
                 // services.AddSingleton<IUpdateEligibilityClassifier, UpdateEligibilityClassifier>();
