@@ -4,6 +4,7 @@ using Microsoft.Extensions.Hosting;
 using RepoDashboard.App.ViewModels;
 using RepoDashboard.Core.Git;
 using RepoDashboard.Core.Repositories;
+using RepoDashboard.Core.Sync;
 using RepoDashboard.Infrastructure.Configuration;
 using RepoDashboard.Infrastructure.Git;
 
@@ -30,9 +31,9 @@ public partial class App : Application
                 services.AddSingleton<IRepositoryConfigurationStore, JsonRepositoryConfigurationStore>();
                 services.AddSingleton<IDivergenceCalculator, DivergenceCalculator>();
                 services.AddSingleton<IRepositoryInspector, RepositoryInspector>();
+                services.AddSingleton<IUpdateEligibilityClassifier, UpdateEligibilityClassifier>();
                 // services.AddSingleton<IRepositoryFetcher, RepositoryFetcher>();
                 // services.AddSingleton<IRepositoryUpdater, RepositoryUpdater>();
-                // services.AddSingleton<IUpdateEligibilityClassifier, UpdateEligibilityClassifier>();
                 // services.AddSingleton<IRepositoryDashboardService, RepositoryDashboardService>();
 
                 services.AddSingleton<MainWindowViewModel>();
