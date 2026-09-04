@@ -87,10 +87,38 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
         }
     }
 
+    private sealed class StubFetcher : IRepositoryFetcher
+    {
+        private readonly Func<RepositoryConfiguration, RepositoryOperationResult> _fetch;
+
+        public int Calls { get; private set; }
+
+        public StubFetcher(
+            Func<RepositoryConfiguration, RepositoryOperationResult>? fetch = null)
+        {
+            _fetch = fetch ?? (c => new RepositoryOperationResult
+            {
+                Success = true,
+                Operation = RepositoryOperationType.Fetch,
+                Message = "Fetched 'origin' (pruned).",
+                Duration = TimeSpan.Zero
+            });
+        }
+
+        public Task<RepositoryOperationResult> FetchAsync(
+            RepositoryConfiguration repository,
+            CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.FromResult(_fetch(repository));
+        }
+    }
+
     private static RepositoryDashboardService CreateSut(
         InMemoryStore store,
-        StubInspector inspector) =>
-        new(store, inspector, new UpdateEligibilityClassifier());
+        StubInspector inspector,
+        IRepositoryFetcher? fetcher = null) =>
+        new(store, inspector, new UpdateEligibilityClassifier(), fetcher ?? new StubFetcher());
 
     private string CreateTempDirectory()
     {
@@ -344,5 +372,275 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
 
         await act.Should().ThrowAsync<KeyNotFoundException>();
         store.SaveCalls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task FetchAsync_SuccessfulFetch_ReinspectsAndRecordsTimestamp()
+    {
+        var configuration = Config("Store");
+        var store = new InMemoryStore([configuration]);
+        var inspector = new StubInspector(UpToDateSnapshot);
+        var fetcher = new StubFetcher();
+        var sut = CreateSut(store, inspector, fetcher);
+        var before = DateTimeOffset.UtcNow;
+
+        var item = await sut.FetchAsync(configuration.Id, CancellationToken.None);
+
+        fetcher.Calls.Should().Be(1);
+        // The item must come from a full re-inspection, never patched manually.
+        inspector.Calls.Should().Be(1);
+        item.Snapshot.Should().BeEquivalentTo(
+            UpToDateSnapshot(configuration),
+            o => o.Excluding(s => s.InspectedAt));
+        item.FetchError.Should().BeNull();
+        item.InspectionError.Should().BeNull();
+        item.LastSuccessfulFetch.Should().NotBeNull();
+        item.LastSuccessfulFetch!.Value.Should().BeOnOrAfter(before);
+        item.LastSuccessfulFetch!.Value.Should().BeOnOrBefore(DateTimeOffset.UtcNow);
+    }
+
+    [Fact]
+    public async Task FetchAsync_UnknownId_ThrowsKeyNotFound()
+    {
+        var inspector = new StubInspector(UpToDateSnapshot);
+        var fetcher = new StubFetcher();
+        var sut = CreateSut(new InMemoryStore([Config()]), inspector, fetcher);
+
+        var act = () => sut.FetchAsync(Guid.NewGuid(), CancellationToken.None);
+
+        await act.Should().ThrowAsync<KeyNotFoundException>();
+        fetcher.Calls.Should().Be(0);
+        inspector.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task FetchAsync_FailedFetch_KeepsLocalStateWithFetchError()
+    {
+        var configuration = Config("Store");
+        var store = new InMemoryStore([configuration]);
+        var inspector = new StubInspector(UpToDateSnapshot);
+        var fetcher = new StubFetcher(c => new RepositoryOperationResult
+        {
+            Success = false,
+            Operation = RepositoryOperationType.Fetch,
+            Message = "git fetch origin --prune failed with exit code 128: boom",
+            ExitCode = 128,
+            Duration = TimeSpan.Zero
+        });
+        var sut = CreateSut(store, inspector, fetcher);
+
+        var item = await sut.FetchAsync(configuration.Id, CancellationToken.None);
+
+        fetcher.Calls.Should().Be(1);
+        inspector.Calls.Should().Be(1);
+        item.FetchError.Should().Contain("boom");
+        item.InspectionError.Should().BeNull();
+        item.LastSuccessfulFetch.Should().BeNull();
+        // Local state is still classified normally — only the fetch failed.
+        item.UpdateDecision.Eligibility
+            .Should().Be(UpdateEligibility.AlreadyUpToDate);
+        item.Snapshot.CurrentBranch.Should().Be("main");
+    }
+
+    [Fact]
+    public async Task FetchAsync_ThrowingFetcher_KeepsLocalStateWithFetchError()
+    {
+        var configuration = Config("Store");
+        var store = new InMemoryStore([configuration]);
+        var inspector = new StubInspector(UpToDateSnapshot);
+        var fetcher = new StubFetcher(
+            _ => throw new InvalidOperationException("network down"));
+        var sut = CreateSut(store, inspector, fetcher);
+
+        var item = await sut.FetchAsync(configuration.Id, CancellationToken.None);
+
+        item.FetchError.Should().Contain("network down");
+        item.InspectionError.Should().BeNull();
+        item.LastSuccessfulFetch.Should().BeNull();
+        item.Snapshot.CurrentBranch.Should().Be("main");
+    }
+
+    [Fact]
+    public async Task FetchAllAsync_CollectsAllResultsDespiteFailure()
+    {
+        var first = Config("First", """C:\Source\Repos\First""");
+        var broken = Config("Broken", """C:\Source\Repos\Broken""");
+        var third = Config("Third", """C:\Source\Repos\Third""");
+        var store = new InMemoryStore([first, broken, third]);
+        var inspector = new StubInspector(UpToDateSnapshot);
+        var fetcher = new StubFetcher(c => c.Name == "Broken"
+            ? new RepositoryOperationResult
+            {
+                Success = false,
+                Operation = RepositoryOperationType.Fetch,
+                Message = "fetch boom",
+                Duration = TimeSpan.Zero
+            }
+            : new RepositoryOperationResult
+            {
+                Success = true,
+                Operation = RepositoryOperationType.Fetch,
+                Message = "Fetched 'origin' (pruned).",
+                Duration = TimeSpan.Zero
+            });
+        var sut = CreateSut(store, inspector, fetcher);
+
+        var items = await sut.FetchAllAsync(CancellationToken.None);
+
+        items.Should().HaveCount(3);
+        fetcher.Calls.Should().Be(3);
+        inspector.Calls.Should().Be(3);
+
+        items.Select(i => i.Configuration.Name)
+            .Should().Equal("First", "Broken", "Third");
+
+        items[0].FetchError.Should().BeNull();
+        items[0].LastSuccessfulFetch.Should().NotBeNull();
+        items[2].FetchError.Should().BeNull();
+        items[2].LastSuccessfulFetch.Should().NotBeNull();
+
+        var failed = items[1];
+        failed.FetchError.Should().Contain("fetch boom");
+        failed.InspectionError.Should().BeNull();
+        failed.LastSuccessfulFetch.Should().BeNull();
+        failed.Snapshot.CurrentBranch.Should().Be("main");
+    }
+
+    [Fact]
+    public async Task FetchAllAsync_EmptyStore_ReturnsEmpty()
+    {
+        var fetcher = new StubFetcher();
+        var sut = CreateSut(
+            new InMemoryStore(),
+            new StubInspector(UpToDateSnapshot),
+            fetcher);
+
+        var items = await sut.FetchAllAsync(CancellationToken.None);
+
+        items.Should().BeEmpty();
+        fetcher.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task FetchAsync_SuccessThenRefresh_PreservesLastSuccessfulFetch()
+    {
+        var configuration = Config("Store");
+        var store = new InMemoryStore([configuration]);
+        var sut = CreateSut(
+            store,
+            new StubInspector(UpToDateSnapshot),
+            new StubFetcher());
+
+        var fetched = await sut.FetchAsync(configuration.Id, CancellationToken.None);
+        var refreshed = await sut.RefreshAsync(configuration.Id, CancellationToken.None);
+
+        fetched.LastSuccessfulFetch.Should().NotBeNull();
+        refreshed.LastSuccessfulFetch.Should().Be(fetched.LastSuccessfulFetch);
+        refreshed.FetchError.Should().BeNull();
+    }
+
+    private sealed class TrackingFetcher : IRepositoryFetcher
+    {
+        private readonly TimeSpan _delay;
+        private int _current;
+
+        public int Calls;
+        public int MaxConcurrent;
+
+        public TrackingFetcher(TimeSpan delay)
+        {
+            _delay = delay;
+        }
+
+        public async Task<RepositoryOperationResult> FetchAsync(
+            RepositoryConfiguration repository,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref Calls);
+            var current = Interlocked.Increment(ref _current);
+
+            int previous;
+            do
+            {
+                previous = MaxConcurrent;
+            }
+            while (previous < current &&
+                Interlocked.CompareExchange(ref MaxConcurrent, current, previous) != previous);
+
+            try
+            {
+                await Task.Delay(_delay, cancellationToken);
+                return new RepositoryOperationResult
+                {
+                    Success = true,
+                    Operation = RepositoryOperationType.Fetch,
+                    Message = "Fetched 'origin' (pruned).",
+                    Duration = _delay
+                };
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _current);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task FetchAllAsync_BoundsConcurrencyToFour()
+    {
+        var configurations = Enumerable.Range(0, 10)
+            .Select(i => Config($"Repo{i}", $"""C:\Source\Repos\Repo{i}"""))
+            .ToList();
+        var store = new InMemoryStore(configurations);
+        var fetcher = new TrackingFetcher(TimeSpan.FromMilliseconds(100));
+        var sut = CreateSut(
+            store,
+            new StubInspector(UpToDateSnapshot),
+            fetcher);
+
+        var items = await sut.FetchAllAsync(CancellationToken.None);
+
+        items.Should().HaveCount(10);
+        items.Should().OnlyContain(i => i.FetchError == null);
+        items.Should().OnlyContain(i => i.LastSuccessfulFetch != null);
+        fetcher.MaxConcurrent.Should().BeLessThanOrEqualTo(4);
+    }
+
+    [Fact]
+    public async Task FetchAsync_SameRepository_SerializesConcurrentFetches()
+    {
+        var configuration = Config("Store");
+        var store = new InMemoryStore([configuration]);
+        var fetcher = new TrackingFetcher(TimeSpan.FromMilliseconds(200));
+        var sut = CreateSut(
+            store,
+            new StubInspector(UpToDateSnapshot),
+            fetcher);
+
+        var first = sut.FetchAsync(configuration.Id, CancellationToken.None);
+        var second = sut.FetchAsync(configuration.Id, CancellationToken.None);
+        await Task.WhenAll(first, second);
+
+        fetcher.Calls.Should().Be(2);
+        fetcher.MaxConcurrent.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task FetchAllAsync_DifferentRepositories_RunInParallel()
+    {
+        var configurations = Enumerable.Range(0, 4)
+            .Select(i => Config($"Repo{i}", $"""C:\Source\Repos\Repo{i}"""))
+            .ToList();
+        var store = new InMemoryStore(configurations);
+        var fetcher = new TrackingFetcher(TimeSpan.FromMilliseconds(200));
+        var sut = CreateSut(
+            store,
+            new StubInspector(UpToDateSnapshot),
+            fetcher);
+
+        var items = await sut.FetchAllAsync(CancellationToken.None);
+
+        items.Should().HaveCount(4);
+        fetcher.MaxConcurrent.Should().BeInRange(2, 4);
     }
 }

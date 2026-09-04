@@ -37,4 +37,24 @@ public interface IRepositoryDashboardService
     Task RemoveAsync(
         Guid repositoryId,
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Fetches remote state (<c>git fetch --prune</c>) for one repository
+    /// and then fully re-inspects it, so divergence is never stale.
+    /// A fetch failure does not throw: the returned item carries
+    /// <c>FetchError</c> alongside the freshly inspected local state.
+    /// </summary>
+    /// <exception cref="KeyNotFoundException">Unknown repository id.</exception>
+    Task<RepositoryDashboardItem> FetchAsync(
+        Guid repositoryId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Fetches every repository with bounded concurrency (at most 4
+    /// simultaneous Git operations). One repository's failure never
+    /// aborts the batch — every result is collected — except for
+    /// cancellation, which still aborts.
+    /// </summary>
+    Task<IReadOnlyList<RepositoryDashboardItem>> FetchAllAsync(
+        CancellationToken cancellationToken);
 }
