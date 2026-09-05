@@ -3,6 +3,7 @@ using RepoDashboard.Core.Dashboard;
 using RepoDashboard.Core.Git;
 using RepoDashboard.Core.Models;
 using RepoDashboard.Core.Repositories;
+using RepoDashboard.Core.State;
 using RepoDashboard.Core.Sync;
 
 namespace RepoDashboard.Core.Tests.Dashboard;
@@ -1068,5 +1069,127 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
         fetcher.Calls.Should().Be(1);
         updater.Calls.Should().Be(1);
         probe.Max.Should().Be(1);
+    }
+
+    /// <summary>
+    /// In-memory stand-in for <c>state.json</c>: records what the service
+    /// persists without touching disk.
+    /// </summary>
+    private sealed class StubStateStore : IOperationStateStore
+    {
+        public Dictionary<Guid, DateTimeOffset> ToLoad { get; set; } = [];
+
+        public Dictionary<Guid, DateTimeOffset> Saved { get; private set; } = [];
+
+        public int SaveCalls { get; private set; }
+
+        public Task<IReadOnlyDictionary<Guid, DateTimeOffset>> LoadAsync(
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyDictionary<Guid, DateTimeOffset>>(
+                ToLoad.ToDictionary(entry => entry.Key, entry => entry.Value));
+
+        public Task SaveAsync(
+            IReadOnlyDictionary<Guid, DateTimeOffset> lastSuccessfulFetch,
+            CancellationToken cancellationToken)
+        {
+            SaveCalls++;
+            Saved = lastSuccessfulFetch
+                .ToDictionary(entry => entry.Key, entry => entry.Value);
+            return Task.CompletedTask;
+        }
+    }
+
+    private static RepositoryDashboardService CreateSutWithState(
+        InMemoryStore store,
+        StubInspector inspector,
+        StubStateStore state,
+        IRepositoryFetcher? fetcher = null,
+        IRepositoryUpdater? updater = null) =>
+        new(
+            store,
+            inspector,
+            new UpdateEligibilityClassifier(),
+            fetcher ?? new StubFetcher(),
+            updater ?? new StubUpdater(),
+            state);
+
+    [Fact]
+    public async Task FetchAsync_Success_PersistsTimestampToStateStore()
+    {
+        var configuration = Config("Store");
+        var state = new StubStateStore();
+        var sut = CreateSutWithState(
+            new InMemoryStore([configuration]),
+            new StubInspector(UpToDateSnapshot),
+            state);
+
+        var item = await sut.FetchAsync(configuration.Id, CancellationToken.None);
+
+        item.LastSuccessfulFetch.Should().NotBeNull();
+        state.SaveCalls.Should().BeGreaterThan(0);
+        state.Saved.Should().ContainKey(configuration.Id);
+    }
+
+    [Fact]
+    public async Task FetchAsync_Failure_DoesNotTouchStateStore()
+    {
+        var configuration = Config("Store");
+        var state = new StubStateStore();
+        var sut = CreateSutWithState(
+            new InMemoryStore([configuration]),
+            new StubInspector(UpToDateSnapshot),
+            state,
+            new StubFetcher(_ => FailedFetch()));
+
+        var item = await sut.FetchAsync(configuration.Id, CancellationToken.None);
+
+        item.LastSuccessfulFetch.Should().BeNull();
+        state.SaveCalls.Should().Be(0);
+        state.Saved.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task LoadAsync_RestoresPersistedTimestampsAfterRestart()
+    {
+        var configuration = Config("Store");
+        var fetchedAt = new DateTimeOffset(
+            2026, 9, 4, 12, 44, 0, TimeSpan.FromHours(3));
+        var state = new StubStateStore
+        {
+            ToLoad = new Dictionary<Guid, DateTimeOffset>
+            {
+                [configuration.Id] = fetchedAt
+            }
+        };
+        var sut = CreateSutWithState(
+            new InMemoryStore([configuration]),
+            new StubInspector(UpToDateSnapshot),
+            state);
+
+        var items = await sut.LoadAsync(CancellationToken.None);
+
+        items.Should().ContainSingle()
+            .Which.LastSuccessfulFetch.Should().Be(fetchedAt);
+    }
+
+    [Fact]
+    public async Task RemoveAsync_ForgetsPersistedTimestamp()
+    {
+        var configuration = Config("Store");
+        var state = new StubStateStore
+        {
+            ToLoad = new Dictionary<Guid, DateTimeOffset>
+            {
+                [configuration.Id] = DateTimeOffset.UtcNow
+            }
+        };
+        var sut = CreateSutWithState(
+            new InMemoryStore([configuration]),
+            new StubInspector(UpToDateSnapshot),
+            state);
+
+        await sut.RemoveAsync(configuration.Id, CancellationToken.None);
+
+        state.Saved.Should().NotContainKey(configuration.Id);
     }
 }

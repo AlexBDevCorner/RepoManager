@@ -6,9 +6,11 @@ using RepoDashboard.App.ViewModels;
 using RepoDashboard.Core.Dashboard;
 using RepoDashboard.Core.Git;
 using RepoDashboard.Core.Repositories;
+using RepoDashboard.Core.State;
 using RepoDashboard.Core.Sync;
 using RepoDashboard.Infrastructure.Configuration;
 using RepoDashboard.Infrastructure.Git;
+using RepoDashboard.Infrastructure.State;
 
 namespace RepoDashboard.App;
 
@@ -31,6 +33,7 @@ public partial class App : Application
                 services.AddSingleton<IGitCommandRunner, GitCommandRunner>();
                 services.AddSingleton<IGitEnvironment, GitEnvironment>();
                 services.AddSingleton<IRepositoryConfigurationStore, JsonRepositoryConfigurationStore>();
+                services.AddSingleton<IOperationStateStore, JsonOperationStateStore>();
                 services.AddSingleton<IDivergenceCalculator, DivergenceCalculator>();
                 services.AddSingleton<IRepositoryInspector, RepositoryInspector>();
                 services.AddSingleton<IRepositoryFetcher, RepositoryFetcher>();

@@ -25,6 +25,30 @@
             <Button Content="Refresh All"
                     Command="{Binding RefreshAllCommand}"
                     Margin="4,0" />
+            <Separator />
+            <Button Content="Fetch"
+                    Command="{Binding FetchCommand}"
+                    Margin="4,0" />
+            <Button Content="Fetch All"
+                    Command="{Binding FetchAllCommand}"
+                    Margin="4,0" />
+            <Separator />
+            <Button Content="Update"
+                    Command="{Binding UpdateCommand}"
+                    Margin="4,0" />
+            <Button Content="Update Safe Repositories"
+                    Command="{Binding UpdateAllCommand}"
+                    Margin="4,0" />
+            <Separator />
+            <Button Content="Open Folder"
+                    Command="{Binding OpenFolderCommand}"
+                    Margin="4,0" />
+            <Button Content="Open Terminal"
+                    Command="{Binding OpenTerminalCommand}"
+                    Margin="4,0" />
+            <Button Content="Copy Path"
+                    Command="{Binding CopyPathCommand}"
+                    Margin="4,0" />
         </ToolBar>
 
         <StatusBar DockPanel.Dock="Bottom">
@@ -42,11 +66,124 @@
             </StatusBarItem>
         </StatusBar>
 
+        <Border DockPanel.Dock="Bottom"
+                BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}"
+                BorderThickness="0,1,0,0"
+                Visibility="{Binding HasSelection, Converter={StaticResource BooleanToVisibilityConverter}}">
+            <StackPanel Margin="8,4,8,8"
+                        DataContext="{Binding SelectedRepository}">
+                <TextBlock Text="{Binding Name}"
+                           FontWeight="Bold" />
+                <Grid Margin="0,4,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0"
+                               Text="Path"
+                               Opacity="0.7" Margin="0,0,8,2" />
+                    <TextBlock Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="3"
+                               Text="{Binding DetailsPath}"
+                               TextWrapping="Wrap" Margin="0,0,0,2" />
+
+                    <TextBlock Grid.Row="1" Grid.Column="0"
+                               Text="Current branch"
+                               Opacity="0.7" Margin="0,0,8,2" />
+                    <TextBlock Grid.Row="1" Grid.Column="1"
+                               Text="{Binding DetailsBranch}" Margin="0,0,0,2" />
+                    <TextBlock Grid.Row="1" Grid.Column="2"
+                               Text="Upstream"
+                               Opacity="0.7" Margin="16,0,8,2" />
+                    <TextBlock Grid.Row="1" Grid.Column="3"
+                               Text="{Binding DetailsUpstream}" Margin="0,0,0,2" />
+
+                    <TextBlock Grid.Row="2" Grid.Column="0"
+                               Text="Remote default"
+                               Opacity="0.7" Margin="0,0,8,2" />
+                    <TextBlock Grid.Row="2" Grid.Column="1"
+                               Text="{Binding DetailsRemoteDefault}" Margin="0,0,0,2" />
+                    <TextBlock Grid.Row="2" Grid.Column="2"
+                               Text="Remote"
+                               Opacity="0.7" Margin="16,0,8,2" />
+                    <TextBlock Grid.Row="2" Grid.Column="3"
+                               Text="{Binding DetailsRemote}" Margin="0,0,0,2" />
+
+                    <TextBlock Grid.Row="3" Grid.Column="0"
+                               Text="Branch vs upstream"
+                               Opacity="0.7" Margin="0,0,8,2" />
+                    <TextBlock Grid.Row="3" Grid.Column="1"
+                               Text="{Binding DetailsVsUpstream}" Margin="0,0,0,2" />
+                    <TextBlock Grid.Row="3" Grid.Column="2"
+                               Text="Branch vs default"
+                               Opacity="0.7" Margin="16,0,8,2" />
+                    <TextBlock Grid.Row="3" Grid.Column="3"
+                               Text="{Binding DetailsVsDefault}" Margin="0,0,0,2" />
+
+                    <TextBlock Grid.Row="4" Grid.Column="0"
+                               Text="Working tree"
+                               Opacity="0.7" Margin="0,0,8,2" />
+                    <TextBlock Grid.Row="4" Grid.Column="1"
+                               Text="{Binding DetailsWorkingTree}" Margin="0,0,0,2" />
+                    <TextBlock Grid.Row="4" Grid.Column="2"
+                               Text="Last successful fetch"
+                               Opacity="0.7" Margin="16,0,8,2" />
+                    <TextBlock Grid.Row="4" Grid.Column="3"
+                               Text="{Binding DetailsLastFetch}" Margin="0,0,0,2" />
+
+                    <TextBlock Grid.Row="5" Grid.Column="0"
+                               Text="Last operation"
+                               Opacity="0.7" Margin="0,0,8,2" />
+                    <TextBlock Grid.Row="5" Grid.Column="1" Grid.ColumnSpan="3"
+                               Text="{Binding DetailsLastOperation}" Margin="0,0,0,2" />
+
+                    <TextBlock Grid.Row="6" Grid.Column="0"
+                               Text="Status"
+                               Opacity="0.7" Margin="0,0,8,2" />
+                    <TextBlock Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="3"
+                               Text="{Binding Explanation}"
+                               TextWrapping="Wrap" Margin="0,0,0,2" />
+
+                    <TextBlock Grid.Row="7" Grid.Column="0"
+                               Text="Git error"
+                               Opacity="0.7" Margin="0,0,8,2" />
+                    <TextBlock Grid.Row="7" Grid.Column="1" Grid.ColumnSpan="3"
+                               Text="{Binding DetailsGitError}"
+                               TextWrapping="Wrap" Margin="0,0,0,2" />
+                </Grid>
+            </StackPanel>
+        </Border>
+
         <DataGrid ItemsSource="{Binding Repositories}"
-                  SelectedItem="{Binding SelectedRepository, Mode=TwoWay}"
-                  AutoGenerateColumns="False"
-                  IsReadOnly="True"
-                  SelectionMode="Single">
+                   SelectedItem="{Binding SelectedRepository, Mode=TwoWay}"
+                   AutoGenerateColumns="False"
+                   IsReadOnly="True"
+                   SelectionMode="Single">
+            <DataGrid.ContextMenu>
+                <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                    <MenuItem Header="Refresh" Command="{Binding RefreshCommand}" />
+                    <MenuItem Header="Fetch" Command="{Binding FetchCommand}" />
+                    <MenuItem Header="Update" Command="{Binding UpdateCommand}" />
+                    <Separator />
+                    <MenuItem Header="Open Folder" Command="{Binding OpenFolderCommand}" />
+                    <MenuItem Header="Open Terminal" Command="{Binding OpenTerminalCommand}" />
+                    <MenuItem Header="Copy Path" Command="{Binding CopyPathCommand}" />
+                    <Separator />
+                    <MenuItem Header="Remove from dashboard" Command="{Binding RemoveCommand}" />
+                </ContextMenu>
+            </DataGrid.ContextMenu>
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Repository"
                                     Binding="{Binding Name}"
@@ -54,7 +191,7 @@
                 <DataGridTextColumn Header="Branch"
                                     Binding="{Binding Branch}"
                                     Width="*" />
-                <DataGridTextColumn Header="Changes"
+                <DataGridTextColumn Header="Worktree"
                                     Binding="{Binding WorktreeStatus}"
                                     Width="Auto" />
                 <DataGridTextColumn Header="Tracking"
@@ -63,11 +200,17 @@
                 <DataGridTextColumn Header="Vs Default"
                                     Binding="{Binding DefaultBranchStatus}"
                                     Width="Auto" />
-                <DataGridTextColumn Header="Status"
+                <DataGridTextColumn Header="Update"
                                     Binding="{Binding UpdateStatus}"
                                     Width="Auto" />
+                <DataGridTextColumn Header="Activity"
+                                    Binding="{Binding ActivityText}"
+                                    Width="*" />
                 <DataGridTextColumn Header="Last Fetch"
                                     Binding="{Binding LastFetchText}"
+                                    Width="Auto" />
+                <DataGridTextColumn Header="Remote"
+                                    Binding="{Binding StaleText}"
                                     Width="Auto" />
             </DataGrid.Columns>
             <DataGrid.RowDetailsTemplate>

@@ -291,6 +291,103 @@ public sealed class MainWindowViewModelTests
             "Refreshed 1 of 2 repositories. 1 failed.");
     }
 
+    private static RepositoryDashboardItem WithUpdate(
+        RepositoryDashboardItem item,
+        RepositoryUpdateOutcome outcome,
+        UpdateEligibility reason,
+        string message) =>
+        item with
+        {
+            UpdateDecision = new UpdateDecision(reason, message),
+            UpdateResult = new RepositoryUpdateResult
+            {
+                RepositoryId = item.Configuration.Id,
+                Outcome = outcome,
+                Message = message,
+                Decision = new UpdateDecision(reason, message),
+                FetchResult = new RepositoryOperationResult
+                {
+                    Success = true,
+                    Operation = RepositoryOperationType.Fetch,
+                    Message = "Fetched 'origin' (pruned).",
+                    Duration = TimeSpan.Zero
+                },
+                FinalSnapshot = item.Snapshot
+            }
+        };
+
+    [Fact]
+    public async Task FetchAll_reports_aggregate_summary()
+    {
+        var fetched = Item("Store");
+        var failed = Item("Broken") with
+        {
+            FetchError = "git fetch origin --prune failed with exit code 128: boom"
+        };
+        var dashboard = new FakeDashboard([fetched, failed]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker());
+        await sut.InitializeAsync();
+
+        await sut.FetchAllCommand.ExecuteAsync(null);
+
+        sut.StatusText.Should().Be(
+            "Fetch complete: 2 repositories, 1 successful, 1 failed.");
+        sut.Repositories.Should().HaveCount(2);
+        sut.Repositories[1].Activity.Should().Be(RepositoryActivity.Failed);
+        sut.Repositories[1].ActivityText.Should().Contain("Fetch failed");
+    }
+
+    [Fact]
+    public async Task UpdateAll_reports_per_reason_breakdown()
+    {
+        var updated = WithUpdate(
+            Item("FileStore"),
+            RepositoryUpdateOutcome.Updated,
+            UpdateEligibility.CanFastForward,
+            "Fast-forwarded 'main'.");
+        var current = Item("Viewer");
+        var dirty = WithUpdate(
+            Item("Search"),
+            RepositoryUpdateOutcome.Skipped,
+            UpdateEligibility.Dirty,
+            "The working tree contains uncommitted changes.");
+        var diverged = WithUpdate(
+            Item("Legacy"),
+            RepositoryUpdateOutcome.Skipped,
+            UpdateEligibility.Diverged,
+            "Local and remote branches have diverged.");
+        var dashboard = new FakeDashboard([updated, current, dirty, diverged]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker());
+        await sut.InitializeAsync();
+
+        await sut.UpdateAllCommand.ExecuteAsync(null);
+
+        sut.StatusText.Should().Be(
+            "Update complete: 4 repositories, 1 updated, " +
+            "1 already current, 1 dirty, 1 diverged.");
+        sut.Repositories[0].Activity.Should().Be(RepositoryActivity.Completed);
+        sut.Repositories[2].Activity.Should().Be(RepositoryActivity.Skipped);
+    }
+
+    [Fact]
+    public async Task Selecting_repository_exposes_details()
+    {
+        var dashboard = new FakeDashboard([Item("Store")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker());
+        await sut.InitializeAsync();
+
+        sut.HasSelection.Should().BeFalse();
+        sut.SelectedRepository = sut.Repositories[0];
+
+        sut.HasSelection.Should().BeTrue();
+        sut.SelectedRepository!.DetailsPath.Should()
+            .Be("""C:\Source\Repos\Store""");
+        sut.SelectedRepository.DetailsRemote.Should().Be("origin");
+    }
+
     [Fact]
     public async Task RefreshAll_keeps_failed_row_with_error_and_selection()
     {

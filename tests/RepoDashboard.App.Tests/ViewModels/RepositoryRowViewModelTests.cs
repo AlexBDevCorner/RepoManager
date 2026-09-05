@@ -155,6 +155,96 @@ public sealed class RepositoryRowViewModelTests
     }
 
     [Fact]
+    public void Never_fetched_row_is_flagged_as_potentially_stale()
+    {
+        var row = new RepositoryRowViewModel(Item(lastFetch: null));
+
+        row.IsStale.Should().BeTrue();
+        row.StaleText.Should().Be("Remote state may be stale");
+        row.LastFetchText.Should().Be("Never");
+    }
+
+    [Fact]
+    public void Freshly_fetched_row_is_not_stale()
+    {
+        var row = new RepositoryRowViewModel(
+            Item(
+                upstream: new Divergence(0, 0),
+                lastFetch: DateTimeOffset.UtcNow));
+
+        row.IsStale.Should().BeFalse();
+        row.StaleText.Should().BeEmpty();
+        row.DetailsLastOperation.Should().Be("Fetch successful");
+    }
+
+    [Fact]
+    public void Days_old_fetch_is_flagged_as_potentially_stale()
+    {
+        var row = new RepositoryRowViewModel(
+            Item(lastFetch: DateTimeOffset.UtcNow.AddDays(-3)));
+
+        row.IsStale.Should().BeTrue();
+        row.StaleText.Should().Be("Remote state may be stale");
+        row.LastFetchText.Should().Be("3 d ago");
+    }
+
+    [Fact]
+    public void Details_panel_maps_selection_fields()
+    {
+        var row = new RepositoryRowViewModel(
+            Item(
+                branch: "feature/search",
+                upstream: new Divergence(2, 0),
+                defaultBranch: "main",
+                defaultDivergence: new Divergence(5, 3),
+                eligibility: UpdateEligibility.Ahead,
+                lastFetch: DateTimeOffset.UtcNow));
+
+        row.DetailsPath.Should().Be("""C:\Source\Repos\Store""");
+        row.DetailsBranch.Should().Be("feature/search");
+        row.DetailsUpstream.Should().Be("origin/feature/search");
+        row.DetailsRemoteDefault.Should().Be("origin/main");
+        row.DetailsRemote.Should().Be("origin");
+        row.DetailsVsUpstream.Should().Be("2 ahead / 0 behind");
+        row.DetailsVsDefault.Should().Be("5 ahead / 3 behind");
+        row.DetailsWorkingTree.Should().Be("Clean");
+        row.DetailsLastFetch.Should().NotBe("Never");
+        row.DetailsLastOperation.Should().Be("Fetch successful");
+        row.DetailsGitError.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Failed_inspection_details_show_git_error()
+    {
+        var configuration = new RepositoryConfiguration
+        {
+            Id = Guid.NewGuid(),
+            Name = "Broken",
+            Path = """C:\Source\Repos\Broken"""
+        };
+
+        const string error = "fatal: unable to access 'https://example.invalid/'";
+
+        var row = new RepositoryRowViewModel(new RepositoryDashboardItem
+        {
+            Configuration = configuration,
+            Snapshot = new RepositorySnapshot
+            {
+                RepositoryId = configuration.Id,
+                Path = configuration.Path,
+                InspectedAt = DateTimeOffset.UtcNow
+            },
+            UpdateDecision = new UpdateDecision(
+                UpdateEligibility.Unknown, error),
+            InspectionError = error
+        });
+
+        row.DetailsGitError.Should().Be(error);
+        row.DetailsLastOperation.Should().Be("Inspection failed");
+        row.DetailsWorkingTree.Should().Be("Error");
+    }
+
+    [Fact]
     public void Update_refreshes_properties_in_place()
     {
         var row = new RepositoryRowViewModel(Item(branch: "main"));

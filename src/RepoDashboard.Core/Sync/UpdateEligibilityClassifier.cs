@@ -9,6 +9,21 @@ namespace RepoDashboard.Core.Sync;
 /// </summary>
 public sealed class UpdateEligibilityClassifier : IUpdateEligibilityClassifier
 {
+    private static string DescribeOperation(RepositorySnapshot snapshot)
+    {
+        if (snapshot.MergeInProgress)
+        {
+            return "merge";
+        }
+
+        if (snapshot.RebaseInProgress)
+        {
+            return "rebase";
+        }
+
+        return "cherry-pick";
+    }
+
     public UpdateDecision Classify(
         RepositoryConfiguration configuration,
         RepositorySnapshot snapshot)
@@ -20,21 +35,27 @@ public sealed class UpdateEligibilityClassifier : IUpdateEligibilityClassifier
         {
             return new(
                 UpdateEligibility.RepositoryMissing,
-                "Repository directory does not exist.");
+                $"Repository directory '{configuration.Path}' does not exist. " +
+                "Automatic update is unavailable.");
         }
 
         if (!snapshot.IsGitRepository)
         {
             return new(
                 UpdateEligibility.InvalidRepository,
-                "Directory is not a Git repository.");
+                $"Directory '{configuration.Path}' is not a Git repository. " +
+                "Automatic update is unavailable.");
         }
 
         if (snapshot.IsDetachedHead)
         {
+            var detachedAt = string.IsNullOrWhiteSpace(snapshot.DetachedHeadSha)
+                ? "HEAD is detached."
+                : $"HEAD is detached at '{snapshot.DetachedHeadSha}'.";
             return new(
                 UpdateEligibility.DetachedHead,
-                "HEAD is detached.");
+                $"{detachedAt} Automatic update needs a branch " +
+                "with an upstream, so it was skipped.");
         }
 
         if (snapshot.MergeInProgress
@@ -43,21 +64,28 @@ public sealed class UpdateEligibilityClassifier : IUpdateEligibilityClassifier
         {
             return new(
                 UpdateEligibility.OperationInProgress,
-                "A Git merge, rebase or cherry-pick is in progress.");
+                $"A Git {DescribeOperation(snapshot)} is in progress. " +
+                "Finish or abort it first. Automatic update was skipped.");
         }
 
         if (snapshot.IsDirty)
         {
             return new(
                 UpdateEligibility.Dirty,
-                "The working tree contains uncommitted changes.");
+                "The working tree contains uncommitted changes. " +
+                "Automatic update was skipped to avoid touching your edits.");
         }
+
+        var branch = string.IsNullOrWhiteSpace(snapshot.CurrentBranch)
+            ? "Current branch"
+            : $"Branch '{snapshot.CurrentBranch}'";
 
         if (snapshot.UpstreamRef is null)
         {
             return new(
                 UpdateEligibility.NoUpstream,
-                "Current branch has no upstream branch.");
+                $"{branch} does not track a remote branch. " +
+                "Automatic update is unavailable.");
         }
 
         if (!string.Equals(
@@ -67,8 +95,10 @@ public sealed class UpdateEligibilityClassifier : IUpdateEligibilityClassifier
         {
             return new(
                 UpdateEligibility.UpstreamUsesDifferentRemote,
-                $"Current branch tracks '{snapshot.UpstreamRemote}', " +
-                $"but this repository uses '{configuration.PreferredRemote}'.");
+                $"Current branch tracks '{snapshot.UpstreamRef}' on remote " +
+                $"'{snapshot.UpstreamRemote}', but this repository uses " +
+                $"'{configuration.PreferredRemote}'. " +
+                "Automatic update was skipped.");
         }
 
         var divergence =
@@ -78,7 +108,8 @@ public sealed class UpdateEligibilityClassifier : IUpdateEligibilityClassifier
         {
             return new(
                 UpdateEligibility.Unknown,
-                "Upstream divergence could not be determined.");
+                $"Upstream divergence of '{snapshot.UpstreamRef}' " +
+                "could not be determined. Automatic update was skipped.");
         }
 
         if (divergence.Ahead == 0
@@ -86,7 +117,8 @@ public sealed class UpdateEligibilityClassifier : IUpdateEligibilityClassifier
         {
             return new(
                 UpdateEligibility.AlreadyUpToDate,
-                "Current branch is already up to date.");
+                $"Current branch is already up to date with " +
+                $"'{snapshot.UpstreamRef}'. There is nothing to pull.");
         }
 
         if (divergence.Ahead > 0
@@ -94,7 +126,9 @@ public sealed class UpdateEligibilityClassifier : IUpdateEligibilityClassifier
         {
             return new(
                 UpdateEligibility.Ahead,
-                $"Current branch is {divergence.Ahead} commit(s) ahead.");
+                $"Local branch has {divergence.Ahead} commit(s) that are " +
+                $"not on '{snapshot.UpstreamRef}'. " +
+                "There is nothing to pull.");
         }
 
         if (divergence.Ahead > 0
@@ -102,13 +136,16 @@ public sealed class UpdateEligibilityClassifier : IUpdateEligibilityClassifier
         {
             return new(
                 UpdateEligibility.Diverged,
-                $"Local and remote branches have diverged: " +
-                $"+{divergence.Ahead} / -{divergence.Behind}.");
+                $"Local branch: +{divergence.Ahead} commit(s). " +
+                $"Remote branch '{snapshot.UpstreamRef}': " +
+                $"+{divergence.Behind} commit(s). " +
+                "Manual merge or rebase is required. " +
+                "Automatic update was skipped.");
         }
 
         return new(
             UpdateEligibility.CanFastForward,
             $"Current branch can fast-forward by " +
-            $"{divergence.Behind} commit(s).");
+            $"{divergence.Behind} commit(s) from '{snapshot.UpstreamRef}'.");
     }
 }

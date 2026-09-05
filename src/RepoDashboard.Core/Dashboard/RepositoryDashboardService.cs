@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using RepoDashboard.Core.Git;
 using RepoDashboard.Core.Models;
 using RepoDashboard.Core.Repositories;
+using RepoDashboard.Core.State;
 using RepoDashboard.Core.Sync;
 
 namespace RepoDashboard.Core.Dashboard;
@@ -24,6 +25,7 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
     private readonly IUpdateEligibilityClassifier _classifier;
     private readonly IRepositoryFetcher _fetcher;
     private readonly IRepositoryUpdater _updater;
+    private readonly IOperationStateStore? _stateStore;
 
     /// <summary>
     /// At most 4 simultaneous Git operations routed through this service.
@@ -53,19 +55,30 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _repositoryLocks = new();
 
     /// <summary>
-    /// In-memory last-successful-fetch timestamps. Only a successful
-    /// fetch records a timestamp; failed fetches leave it untouched.
-    /// Persisted to <c>state.json</c> by a later task; until then it
-    /// lives for the process lifetime.
+    /// Last-successful-fetch timestamps. Only a successful fetch records
+    /// a timestamp; failed fetches leave it untouched. Kept in memory for
+    /// fast reads and mirrored to <c>state.json</c> via
+    /// <see cref="IOperationStateStore"/> (when provided) so the timestamps
+    /// survive restarts. User configuration in <c>repositories.json</c>
+    /// stays clean of this operational state.
     /// </summary>
     private readonly ConcurrentDictionary<Guid, DateTimeOffset> _lastSuccessfulFetch = new();
+
+    /// <summary>
+    /// Guards the one-time load of persisted state: batch operations start
+    /// every repository at once, so several of them can reach the load
+    /// concurrently.
+    /// </summary>
+    private readonly SemaphoreSlim _stateGate = new(1, 1);
+    private bool _stateLoaded;
 
     public RepositoryDashboardService(
         IRepositoryConfigurationStore store,
         IRepositoryInspector inspector,
         IUpdateEligibilityClassifier classifier,
         IRepositoryFetcher fetcher,
-        IRepositoryUpdater updater)
+        IRepositoryUpdater updater,
+        IOperationStateStore? operationStateStore = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(inspector);
@@ -77,11 +90,13 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         _classifier = classifier;
         _fetcher = fetcher;
         _updater = updater;
+        _stateStore = operationStateStore;
     }
 
     public async Task<IReadOnlyList<RepositoryDashboardItem>> LoadAsync(
         CancellationToken cancellationToken)
     {
+        await EnsureStateLoadedAsync(cancellationToken);
         var configurations = await _store.LoadAsync(cancellationToken);
 
         return await InspectAllAsync(configurations, cancellationToken);
@@ -91,6 +106,7 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         Guid repositoryId,
         CancellationToken cancellationToken)
     {
+        await EnsureStateLoadedAsync(cancellationToken);
         var configurations = await _store.LoadAsync(cancellationToken);
 
         var configuration = configurations.FirstOrDefault(
@@ -108,6 +124,7 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
     public async Task<IReadOnlyList<RepositoryDashboardItem>> RefreshAllAsync(
         CancellationToken cancellationToken)
     {
+        await EnsureStateLoadedAsync(cancellationToken);
         var configurations = await _store.LoadAsync(cancellationToken);
 
         return await InspectAllAsync(configurations, cancellationToken);
@@ -186,12 +203,15 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         // Only repositories.json changes here. The folder, Git data
         // and remotes on disk are never touched.
         await _store.SaveAsync(remaining, cancellationToken);
+
+        await ForgetFetchStateAsync(repositoryId, cancellationToken);
     }
 
     public async Task<RepositoryDashboardItem> FetchAsync(
         Guid repositoryId,
         CancellationToken cancellationToken)
     {
+        await EnsureStateLoadedAsync(cancellationToken);
         var configurations = await _store.LoadAsync(cancellationToken);
 
         var configuration = configurations.FirstOrDefault(
@@ -209,6 +229,7 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
     public async Task<IReadOnlyList<RepositoryDashboardItem>> FetchAllAsync(
         CancellationToken cancellationToken)
     {
+        await EnsureStateLoadedAsync(cancellationToken);
         var configurations = await _store.LoadAsync(cancellationToken);
 
         // Start every repository at once; the global semaphore inside
@@ -227,6 +248,7 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         Guid repositoryId,
         CancellationToken cancellationToken)
     {
+        await EnsureStateLoadedAsync(cancellationToken);
         var configurations = await _store.LoadAsync(cancellationToken);
 
         var configuration = configurations.FirstOrDefault(
@@ -244,6 +266,7 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
     public async Task<IReadOnlyList<RepositoryDashboardItem>> UpdateAllAsync(
         CancellationToken cancellationToken)
     {
+        await EnsureStateLoadedAsync(cancellationToken);
         var configurations = await _store.LoadAsync(cancellationToken);
 
         // Same pattern as FetchAllAsync: start everything at once, let the
@@ -371,7 +394,7 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
                 configuration, fetchResult.Message, cancellationToken);
         }
 
-        _lastSuccessfulFetch[configuration.Id] = DateTimeOffset.UtcNow;
+        await RecordFetchSuccessAsync(configuration.Id, cancellationToken);
 
         try
         {
@@ -488,7 +511,7 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         // the last-fetch timestamp exactly like an explicit Fetch does.
         if (updateResult.FetchResult?.Success == true)
         {
-            _lastSuccessfulFetch[configuration.Id] = DateTimeOffset.UtcNow;
+            await RecordFetchSuccessAsync(configuration.Id, cancellationToken);
         }
 
         if (updateResult.FinalSnapshot is not null)
@@ -578,6 +601,104 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
             : null;
 
     /// <summary>
+    /// Loads persisted fetch timestamps once (no-op without a state store).
+    /// Every read path calls this first so rows show post-restart timestamps.
+    /// </summary>
+    private async Task EnsureStateLoadedAsync(CancellationToken cancellationToken)
+    {
+        if (_stateLoaded || _stateStore is null)
+        {
+            return;
+        }
+
+        await _stateGate.WaitAsync(cancellationToken);
+
+        try
+        {
+            if (_stateLoaded)
+            {
+                return;
+            }
+
+            var loaded = await _stateStore.LoadAsync(cancellationToken);
+
+            foreach (var (repositoryId, fetchedAt) in loaded)
+            {
+                _lastSuccessfulFetch[repositoryId] = fetchedAt;
+            }
+
+            _stateLoaded = true;
+        }
+        finally
+        {
+            _stateGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Records a successful fetch in memory and persists it best-effort.
+    /// A persistence failure never fails the fetch itself: timestamps are
+    /// advisory metadata. Cancellation still propagates.
+    /// </summary>
+    private async Task RecordFetchSuccessAsync(
+        Guid repositoryId,
+        CancellationToken cancellationToken)
+    {
+        _lastSuccessfulFetch[repositoryId] = DateTimeOffset.UtcNow;
+
+        if (_stateStore is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _stateStore.SaveAsync(_lastSuccessfulFetch, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Best effort: the in-memory timestamp stays correct for this
+            // session even when the disk write fails.
+        }
+    }
+
+    /// <summary>
+    /// Drops stored fetch state for a removed repository and persists
+    /// best-effort. State is loaded first so removing an entry cannot wipe
+    /// timestamps that have not been read from disk yet.
+    /// </summary>
+    private async Task ForgetFetchStateAsync(
+        Guid repositoryId,
+        CancellationToken cancellationToken)
+    {
+        await EnsureStateLoadedAsync(cancellationToken);
+
+        _lastSuccessfulFetch.TryRemove(repositoryId, out _);
+
+        if (_stateStore is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _stateStore.SaveAsync(_lastSuccessfulFetch, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch
+        {
+            // Best effort, as in RecordFetchSuccessAsync.
+        }
+    }
+
+    /// <summary>
     /// Releases the global concurrency semaphore and all per-repository
     /// locks. The host disposes this singleton at shutdown; in-flight
     /// operations must have completed by then (application shutdown
@@ -586,6 +707,7 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
     public void Dispose()
     {
         _gitConcurrency.Dispose();
+        _stateGate.Dispose();
 
         foreach (var repositoryLock in _repositoryLocks.Values)
         {

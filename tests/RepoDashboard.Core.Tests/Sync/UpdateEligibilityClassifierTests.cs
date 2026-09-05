@@ -222,6 +222,65 @@ public sealed class UpdateEligibilityClassifierTests
         result.CanUpdate.Should().BeFalse();
     }
 
+    [Fact]
+    public void Dirty_explanation_states_cause_and_consequence()
+    {
+        var snapshot = CreateSnapshot(
+            dirty: true,
+            upstream: "origin/main",
+            ahead: 0,
+            behind: 5);
+
+        var result = _sut.Classify(Configuration, snapshot);
+
+        result.Explanation.Should().Contain("uncommitted changes");
+        result.Explanation.Should().Contain("skipped");
+    }
+
+    [Fact]
+    public void Ahead_explanation_states_nothing_to_pull()
+    {
+        var snapshot = CreateSnapshot(
+            upstream: "origin/main",
+            ahead: 2,
+            behind: 0);
+
+        var result = _sut.Classify(Configuration, snapshot);
+
+        result.Explanation.Should().Contain("2");
+        result.Explanation.Should().Contain("origin/main");
+        result.Explanation.Should().Contain("nothing to pull");
+    }
+
+    [Fact]
+    public void Diverged_explanation_requires_manual_resolution()
+    {
+        var snapshot = CreateSnapshot(
+            upstream: "origin/main",
+            ahead: 3,
+            behind: 5);
+
+        var result = _sut.Classify(Configuration, snapshot);
+
+        result.Explanation.Should().Contain("+3");
+        result.Explanation.Should().Contain("+5");
+        result.Explanation.Should().Contain("Manual merge or rebase");
+    }
+
+    [Fact]
+    public void NoUpstream_explanation_names_branch()
+    {
+        var snapshot = CreateSnapshot(
+            upstream: null,
+            ahead: 0,
+            behind: 0);
+
+        var result = _sut.Classify(Configuration, snapshot);
+
+        result.Explanation.Should().Contain("main");
+        result.Explanation.Should().Contain("does not track a remote branch");
+    }
+
     private static RepositorySnapshot CreateSnapshot(
         bool directoryExists = true,
         bool isGitRepository = true,
