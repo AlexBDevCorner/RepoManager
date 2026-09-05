@@ -19,6 +19,13 @@ public sealed partial class DiscoveredRepositoryOption : ObservableObject
 
     public bool IsAlreadyTracked { get; }
 
+    /// <summary>
+    /// Bound to <c>CheckBox.IsEnabled</c>: already-tracked rows cannot be
+    /// (re)selected. Selection logic additionally filters them out, so
+    /// duplicates are impossible even if the binding is bypassed.
+    /// </summary>
+    public bool IsSelectable => !IsAlreadyTracked;
+
     public string DisplayText =>
         IsAlreadyTracked ? $"{Name} — already on dashboard" : Name;
 

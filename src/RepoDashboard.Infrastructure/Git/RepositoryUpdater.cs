@@ -83,9 +83,10 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
             stopwatch.Stop();
             _logger.LogWarning(
                 "Update failed for {Repository}: fetch failed with exit code {ExitCode}. "
-                + "Duration {DurationSec:F2} sec. Error: {Error}",
+                + "Duration {DurationSec:F2} sec. FailureKind: {FailureKind}",
                 repository.Name, fetchResult.ExitCode,
-                stopwatch.Elapsed.TotalSeconds, fetchResult.Message);
+                stopwatch.Elapsed.TotalSeconds,
+                GitErrorClassifier.Classify(fetchResult.RawOutput ?? fetchResult.Message)?.ToString() ?? "Unknown");
 
             return new RepositoryUpdateResult
             {
@@ -113,9 +114,9 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
         {
             stopwatch.Stop();
             _logger.LogWarning(
-                "Update failed for {Repository}: inspection failed ({Error}). "
+                "Update failed for {Repository}: inspection failed ({ErrorType}). "
                 + "Duration {DurationSec:F2} sec",
-                repository.Name, ex.Message, stopwatch.Elapsed.TotalSeconds);
+                repository.Name, ex.GetType().Name, stopwatch.Elapsed.TotalSeconds);
 
             return new RepositoryUpdateResult
             {
@@ -177,9 +178,9 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
         {
             stopwatch.Stop();
             _logger.LogWarning(
-                "Update failed for {Repository}: could not run git pull ({Error}). "
+                "Update failed for {Repository}: could not run git pull ({ErrorType}). "
                 + "Duration {DurationSec:F2} sec",
-                repository.Name, ex.Message, stopwatch.Elapsed.TotalSeconds);
+                repository.Name, ex.GetType().Name, stopwatch.Elapsed.TotalSeconds);
 
             return new RepositoryUpdateResult
             {
@@ -218,9 +219,11 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
             stopwatch.Stop();
             _logger.LogWarning(
                 "Update failed for {Repository}. Git exit code {ExitCode}. "
-                + "Duration {DurationSec:F2} sec. Error: {Error}",
+                + "Duration {DurationSec:F2} sec. FailureKind: {FailureKind}",
                 repository.Name, pull.ExitCode,
-                stopwatch.Elapsed.TotalSeconds, detail);
+                stopwatch.Elapsed.TotalSeconds, hint is not null
+                    ? GitErrorClassifier.Classify(rawCombined)?.ToString() ?? "Unknown"
+                    : "Unknown");
 
             return new RepositoryUpdateResult
             {
@@ -265,8 +268,8 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
             stopwatch.Stop();
             _logger.LogInformation(
                 "Update completed for {Repository} in {DurationSec:F2} sec "
-                + "(final re-inspection failed: {Error})",
-                repository.Name, stopwatch.Elapsed.TotalSeconds, ex.Message);
+                + "(final re-inspection failed: {ErrorType})",
+                repository.Name, stopwatch.Elapsed.TotalSeconds, ex.GetType().Name);
 
             return new RepositoryUpdateResult
             {

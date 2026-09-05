@@ -15,10 +15,11 @@ namespace RepoDashboard.Infrastructure.Git;
 /// <see cref="RepositoryOperationResult"/>, not an exception, so
 /// batch operations can collect every result.
 /// Structured logging (Task 41) records repository, operation,
-/// duration, exit code and outcome. Secrets are never logged:
-/// only the repository name, remote name, exit code, duration and
-/// Git's own error text are emitted — never environment variables,
-/// config values, or credential material.
+/// duration, exit code, outcome and the classified
+/// <see cref="GitFailureKind"/> — never raw Git output. Git stderr can
+/// embed credential-bearing URLs (<c>https://user:token@host/...</c>),
+/// so raw text stays in the UI details model only. Secrets, environment
+/// variables and config values are never logged.
 /// </summary>
 public sealed class RepositoryFetcher : IRepositoryFetcher
 {
@@ -72,12 +73,14 @@ public sealed class RepositoryFetcher : IRepositoryFetcher
             // The Git process never ran (for example the directory is
             // missing): report it as a failed operation so batch fetches
             // keep going instead of aborting on one broken entry.
+            // Never log ex.Message verbatim: it can carry paths/URLs.
+            // Log the exception type plus a sanitized hint instead.
             stopwatch.Stop();
 
             _logger.LogWarning(
-                "Fetch failed for {Repository}: git process did not run ({Error}). "
+                "Fetch failed for {Repository}: git process did not run ({ErrorType}). "
                 + "Duration {DurationMs} ms",
-                repository.Name, ex.Message, stopwatch.Elapsed.TotalMilliseconds);
+                repository.Name, ex.GetType().Name, stopwatch.Elapsed.TotalMilliseconds);
 
             return new RepositoryOperationResult
             {
@@ -124,11 +127,16 @@ public sealed class RepositoryFetcher : IRepositoryFetcher
             message = $"{hint} {message}";
         }
 
+        // Never log raw Git output (detail/rawOutput): it can embed
+        // credential-bearing URLs. Log the classified failure kind instead;
+        // the raw text stays in the result model for the UI details panel.
+        var failureKind = GitErrorClassifier.Classify(rawOutput ?? detail);
+
         _logger.LogWarning(
             "Fetch failed for {Repository}. Git exit code {ExitCode}. "
-            + "Duration {DurationSec:F2} sec. Error: {Error}",
+            + "Duration {DurationSec:F2} sec. FailureKind: {FailureKind}",
             repository.Name, result.ExitCode,
-            result.Duration.TotalSeconds, detail);
+            result.Duration.TotalSeconds, failureKind?.ToString() ?? "Unknown");
 
         return new RepositoryOperationResult
         {

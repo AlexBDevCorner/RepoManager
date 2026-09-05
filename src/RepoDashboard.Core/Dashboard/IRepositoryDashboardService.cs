@@ -52,10 +52,13 @@ public interface IRepositoryDashboardService
     /// <summary>
     /// Fetches every repository with bounded concurrency (at most 4
     /// simultaneous Git operations). One repository's failure never
-    /// aborts the batch — every result is collected — except for
-    /// cancellation, which still aborts.
+    /// aborts the batch — every result is collected. Cancellation never
+    /// discards completed work: pending repositories never start,
+    /// in-flight Git is killed where possible, and the returned
+    /// <see cref="RepositoryBatchResult"/> carries every completed item
+    /// plus <c>WasCancelled</c>.
     /// </summary>
-    Task<IReadOnlyList<RepositoryDashboardItem>> FetchAllAsync(
+    Task<RepositoryBatchResult> FetchAllAsync(
         CancellationToken cancellationToken);
 
     /// <summary>
@@ -75,9 +78,9 @@ public interface IRepositoryDashboardService
     /// <summary>
     /// Updates every repository with bounded concurrency (at most 4
     /// simultaneous Git operations). One repository's failure or skip
-    /// never aborts the batch — every result is collected — except for
-    /// cancellation, which still aborts.
+    /// never aborts the batch — every result is collected. Cancellation
+    /// never discards completed work: see <see cref="FetchAllAsync"/>.
     /// </summary>
-    Task<IReadOnlyList<RepositoryDashboardItem>> UpdateAllAsync(
+    Task<RepositoryBatchResult> UpdateAllAsync(
         CancellationToken cancellationToken);
 }

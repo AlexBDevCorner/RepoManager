@@ -182,7 +182,9 @@ public sealed class RepositoryDashboardServiceTests
 
         var sut = CreateSut(storePath);
 
-        var items = await sut.FetchAllAsync(CancellationToken.None);
+        var batch = await sut.FetchAllAsync(CancellationToken.None);
+        batch.WasCancelled.Should().BeFalse();
+        var items = batch.CompletedItems;
 
         items.Should().HaveCount(3);
 
@@ -289,7 +291,9 @@ public sealed class RepositoryDashboardServiceTests
 
         var sut = CreateSut(storePath);
 
-        var items = await sut.UpdateAllAsync(CancellationToken.None);
+        var batch = await sut.UpdateAllAsync(CancellationToken.None);
+        batch.WasCancelled.Should().BeFalse();
+        var items = batch.CompletedItems;
 
         items.Should().HaveCount(3);
         items.Select(i => i.Configuration.Name)

@@ -78,19 +78,17 @@ public sealed class MainWindowViewModelHardeningTests
             Guid repositoryId, CancellationToken cancellationToken) =>
             Task.FromResult(_items.First(i => i.Configuration.Id == repositoryId));
 
-        public Task<IReadOnlyList<RepositoryDashboardItem>> FetchAllAsync(
+        public Task<RepositoryBatchResult> FetchAllAsync(
             CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<RepositoryDashboardItem>>(
-                _items.ToList());
+            Task.FromResult(RepositoryBatchResult.Completed(_items.ToList()));
 
         public Task<RepositoryDashboardItem> UpdateAsync(
             Guid repositoryId, CancellationToken cancellationToken) =>
             Task.FromResult(_items.First(i => i.Configuration.Id == repositoryId));
 
-        public Task<IReadOnlyList<RepositoryDashboardItem>> UpdateAllAsync(
+        public Task<RepositoryBatchResult> UpdateAllAsync(
             CancellationToken cancellationToken) =>
-            Task.FromResult<IReadOnlyList<RepositoryDashboardItem>>(
-                _items.ToList());
+            Task.FromResult(RepositoryBatchResult.Completed(_items.ToList()));
 
         public Task<RepositoryDashboardItem> AddAsync(
             string path, CancellationToken cancellationToken)
@@ -138,6 +136,41 @@ public sealed class MainWindowViewModelHardeningTests
     private sealed class FixedPicker(string? path) : IFolderPickerService
     {
         public string? PickFolder(string title) => path;
+    }
+
+    /// <summary>
+    /// Discovery that stays running until cancelled: proves Cancel actually
+    /// interrupts the scan (review: discovery must not block the UI thread).
+    /// </summary>
+    private sealed class BlockingDiscovery : IRepositoryDiscoveryService
+    {
+        public TaskCompletionSource Started { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task<IReadOnlyList<DiscoveredRepository>> DiscoverAsync(
+            string rootPath, int maxDepth = 3,
+            CancellationToken cancellationToken = default)
+        {
+            Started.TrySetResult();
+            return DiscoverBlockedAsync(cancellationToken);
+        }
+
+        private static async Task<IReadOnlyList<DiscoveredRepository>> DiscoverBlockedAsync(
+            CancellationToken cancellationToken)
+        {
+            // Never completes on its own — only via cancellation.
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return [];
+        }
+    }
+
+    private sealed class UnreachableDialog : IDiscoveryDialogService
+    {
+        public IReadOnlyList<string>? PickRepositoriesToAdd(
+            IReadOnlyList<DiscoveredRepository> candidates,
+            ISet<string> alreadyTrackedPaths) =>
+            throw new InvalidOperationException(
+                "Dialog must not be reached when discovery is cancelled.");
     }
 
     private static DiscoveredRepository Discovered(string name) =>
@@ -208,6 +241,103 @@ public sealed class MainWindowViewModelHardeningTests
 
         sut.Repositories.Should().BeEmpty();
         dashboard.AddCalls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Discover_in_flight_cancel_ends_with_cancellation()
+    {
+        var dashboard = new FakeDashboard();
+        var discovery = new BlockingDiscovery();
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new FixedPicker(@"C:\Source\Repos"),
+            discovery, new UnreachableDialog());
+        await sut.InitializeAsync();
+
+        var executeTask = sut.DiscoverCommand.ExecuteAsync(null);
+
+        // Discovery is running on its own task: the UI thread is free and
+        // Cancel is available — the exact property the review found missing.
+        await discovery.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        sut.CancelCommand.CanExecute(null).Should().BeTrue();
+
+        sut.CancelActiveOperation();
+        await executeTask;
+
+        sut.StatusText.Should().Be("Discovery cancelled.");
+        sut.Repositories.Should().BeEmpty();
+        dashboard.AddCalls.Should().Be(0);
+        sut.CancelCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    private sealed class PartialBatchDashboard(
+        RepositoryDashboardItem completed) : IRepositoryDashboardService
+    {
+        public Task<IReadOnlyList<RepositoryDashboardItem>> LoadAsync(
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<RepositoryDashboardItem>>([completed]);
+
+        public Task<RepositoryDashboardItem> RefreshAsync(
+            Guid repositoryId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<IReadOnlyList<RepositoryDashboardItem>> RefreshAllAsync(
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<RepositoryDashboardItem> FetchAsync(
+            Guid repositoryId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<RepositoryBatchResult> FetchAllAsync(
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new RepositoryBatchResult
+            {
+                CompletedItems = [completed],
+                WasCancelled = true
+            });
+
+        public Task<RepositoryDashboardItem> UpdateAsync(
+            Guid repositoryId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<RepositoryBatchResult> UpdateAllAsync(
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<RepositoryDashboardItem> AddAsync(
+            string path, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task RemoveAsync(
+            Guid repositoryId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+    }
+
+    [Fact]
+    public async Task FetchAll_cancelled_batch_keeps_completed_row_resets_pending()
+    {
+        var done = FakeDashboard.ItemFor(@"C:\Source\Repos\Done");
+        var pending = FakeDashboard.ItemFor(@"C:\Source\Repos\Pending");
+        var dashboard = new PartialBatchDashboard(done);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker());
+        await sut.InitializeAsync();
+
+        // Initialize loads the Done row; seed the pending row so one can
+        // complete while the other stays in-flight.
+        sut.Repositories.Add(new RepositoryRowViewModel(pending));
+
+        await sut.FetchAllCommand.ExecuteAsync(null);
+
+        // Completed row shows its terminal state; the pending row returns
+        // to idle instead of being dropped or left spinning.
+        sut.Repositories.Should().HaveCount(2);
+        sut.Repositories.First(r => r.Name == "Done").Activity
+            .Should().Be(RepositoryActivity.Completed);
+        sut.Repositories.First(r => r.Name == "Pending").Activity
+            .Should().Be(RepositoryActivity.Idle);
+        sut.StatusText.Should().Contain("cancelled");
+        sut.StatusText.Should().Contain("1");
     }
 
     [Fact]

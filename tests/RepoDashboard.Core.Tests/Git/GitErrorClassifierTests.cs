@@ -10,6 +10,10 @@ public sealed class GitErrorClassifierTests
     [InlineData("fatal: could not read Username for 'https://example.invalid': terminal prompts disabled")]
     [InlineData("git@github.com: Permission denied (publickey).")]
     [InlineData("Logon failed, use ctrl+c to cancel basic credential prompt.")]
+    [InlineData("fatal: unable to access 'https://example.invalid/repo.git/': The requested URL returned error: 403")]
+    [InlineData("fatal: unable to access 'https://example.invalid/repo.git/': The requested URL returned error: 401")]
+    [InlineData("fatal: unable to access 'https://example.invalid/': Access denied")]
+    [InlineData("git@example.invalid: Permission denied (publickey). fatal: Could not read from remote repository. Please make sure you have the correct access rights and the repository exists.")]
     public void Authentication_patterns_map_to_auth_hint(string raw)
     {
         GitErrorClassifier.Classify(raw).Should().Be(GitFailureKind.Authentication);

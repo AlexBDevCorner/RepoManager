@@ -8,11 +8,11 @@ namespace RepoDashboard.Infrastructure.Git;
 
 /// <summary>
 /// Executes <c>git.exe</c> directly (never via a shell) with structured
-/// logging (Task 41): command, duration, exit code. Standard output is
-/// never logged — it can be large and is not diagnostic. Standard error
-/// is logged only on failure and only at Debug level, and never includes
-/// secrets: arguments here are fixed Git verbs, never credentials or
-/// environment variables.
+/// logging (Task 41): command, duration, exit code. Standard output and
+/// standard error are never logged — output can be large and stderr can
+/// embed credential-bearing URLs. The working directory is never logged
+/// either (it can contain user names). Callers log repository identity
+/// plus the classified <see cref="GitFailureKind"/> instead.
 /// </summary>
 public sealed class GitCommandRunner : IGitCommandRunner
 {
@@ -58,6 +58,15 @@ public sealed class GitCommandRunner : IGitCommandRunner
 
         process.Start();
 
+        // Kill the process tree the moment cancellation is signalled —
+        // synchronously from the token callback — instead of relying only
+        // on the async catch block below. Shutdown (Task 44) is async-void
+        // and cannot await our continuation before the process exits, so
+        // without this the app could race process termination and orphan
+        // git.exe. The catch block is kept as cleanup/wait.
+        using var killRegistration = cancellationToken.Register(
+            () => TryKillProcessTree(process));
+
         try
         {
             var outputTask =
@@ -74,11 +83,12 @@ public sealed class GitCommandRunner : IGitCommandRunner
             stopwatch.Stop();
 
             // Debug only: success is routine, failures are warned by callers
-            // (fetcher/updater) with repository context. Arguments are safe
-            // Git verbs — never credentials — so logging them is fine.
+            // (fetcher/updater) with repository context. Only the Git verbs
+            // are logged — never the working directory (may contain user
+            // names) and never stdout/stderr (may embed credentials).
             _logger.LogDebug(
-                "git {Arguments} in {Path} exited {ExitCode} in {DurationMs} ms",
-                string.Join(' ', arguments), repositoryPath,
+                "git {Arguments} exited {ExitCode} in {DurationMs} ms",
+                string.Join(' ', arguments),
                 process.ExitCode, stopwatch.Elapsed.TotalMilliseconds);
 
             return new GitCommandResult
@@ -91,21 +101,7 @@ public sealed class GitCommandRunner : IGitCommandRunner
         }
         catch (OperationCanceledException)
         {
-            if (!process.HasExited)
-            {
-                try
-                {
-                    process.Kill(entireProcessTree: true);
-                }
-                catch (InvalidOperationException) when (process.HasExited)
-                {
-                    // Process exited between HasExited and Kill.
-                }
-                catch (Win32Exception) when (process.HasExited)
-                {
-                    // Process finished while Kill was being requested.
-                }
-            }
+            TryKillProcessTree(process);
 
             if (!process.HasExited)
             {
@@ -117,6 +113,60 @@ public sealed class GitCommandRunner : IGitCommandRunner
             }
 
             throw;
+        }
+    }
+
+    /// <summary>
+    /// Best-effort synchronous process-tree kill. Safe to call from a
+    /// cancellation callback (no awaits, no throws): races where the
+    /// process already exited are swallowed via <c>HasExited</c> filters.
+    /// </summary>
+    internal static void TryKillProcessTree(Process process)
+    {
+        try
+        {
+            if (process.HasExited)
+            {
+                return;
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // No process associated (already disposed/exited).
+            return;
+        }
+
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch (InvalidOperationException) when (process.HasExited)
+        {
+            // Process exited between HasExited and Kill.
+        }
+        catch (Win32Exception) when (process.HasExited)
+        {
+            // Process finished while Kill was being requested.
+        }
+        catch (InvalidOperationException)
+        {
+            // Process object already disposed — nothing to kill.
+        }
+        catch (Win32Exception)
+        {
+            // Access denied or already terminating — the catch-block wait
+            // still gives the process a chance to exit on its own.
+        }
+        catch (NotSupportedException)
+        {
+            try
+            {
+                process.Kill();
+            }
+            catch
+            {
+                // Best effort from a cancellation callback: never throw.
+            }
         }
     }
 }

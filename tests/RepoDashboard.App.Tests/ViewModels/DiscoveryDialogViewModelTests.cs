@@ -37,6 +37,7 @@ public sealed class DiscoveryDialogViewModelTests
         var store = sut.Options.First(o => o.Name == "Store");
         store.IsAlreadyTracked.Should().BeTrue();
         store.IsChecked.Should().BeFalse();
+        store.IsSelectable.Should().BeFalse();
         store.DisplayText.Should().Contain("already on dashboard");
 
         sut.SelectedPaths.Should().BeEquivalentTo(

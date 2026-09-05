@@ -569,11 +569,26 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         try
         {
-            var repositories =
+            var batch =
                 await _dashboard.FetchAllAsync(operation.Token);
 
-            SyncRows(repositories, "Fetched");
+            // Completed rows keep their new state even when cancelled;
+            // repositories that never finished stay in-progress here and
+            // are reset to idle below. Rows are never removed: the batch
+            // may be partial.
+            ApplyBatchItems(batch.CompletedItems, "Fetched");
 
+            if (batch.WasCancelled)
+            {
+                ResetInProgressActivities();
+                StatusText = batch.CompletedItems.Count == 0
+                    ? "Fetch cancelled."
+                    : $"Fetch cancelled: {batch.CompletedItems.Count} " +
+                      $"repositories completed before cancel.";
+                return;
+            }
+
+            var repositories = batch.CompletedItems;
             var failedCount = repositories.Count(
                 r => r.FetchError is not null || r.InspectionError is not null);
             var successfulCount = repositories.Count - failedCount;
@@ -688,12 +703,22 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         try
         {
-            var repositories =
+            var batch =
                 await _dashboard.UpdateAllAsync(operation.Token);
 
-            SyncRows(repositories);
+            ApplyBatchItems(batch.CompletedItems);
 
-            StatusText = DescribeUpdateSummary(repositories);
+            if (batch.WasCancelled)
+            {
+                ResetInProgressActivities();
+                StatusText = batch.CompletedItems.Count == 0
+                    ? "Update cancelled."
+                    : $"Update cancelled: {batch.CompletedItems.Count} " +
+                      $"repositories completed before cancel.";
+                return;
+            }
+
+            StatusText = DescribeUpdateSummary(batch.CompletedItems);
         }
         catch (OperationCanceledException)
         {
@@ -1165,6 +1190,41 @@ public sealed partial class MainWindowViewModel : ObservableObject
         if (row.Activity == RepositoryActivity.Idle)
         {
             row.SetActivity(RepositoryActivity.Completed, completedText);
+        }
+    }
+
+    /// <summary>
+    /// Applies batch items without removing rows: cancelled batches are
+    /// partial by design, and missing rows mean "did not finish", not
+    /// "was removed". Non-completed rows keep their in-progress activity
+    /// so the caller can reset them to idle afterwards.
+    /// </summary>
+    private void ApplyBatchItems(
+        IReadOnlyList<RepositoryDashboardItem> completed,
+        string? batchCompletedText = null)
+    {
+        foreach (var item in completed)
+        {
+            var existing = Repositories.FirstOrDefault(
+                r => r.RepositoryId == item.Configuration.Id);
+
+            RepositoryRowViewModel row;
+
+            if (existing is null)
+            {
+                row = new RepositoryRowViewModel(item);
+                Repositories.Add(row);
+            }
+            else
+            {
+                existing.Update(item);
+                row = existing;
+            }
+
+            if (batchCompletedText is not null)
+            {
+                MarkCompletedWhenQuiet(row, batchCompletedText);
+            }
         }
     }
 

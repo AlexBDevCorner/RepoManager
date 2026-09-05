@@ -44,6 +44,21 @@ public sealed class RepositoryDiscoveryService : IRepositoryDiscoveryService
                 $"Directory does not exist: '{root}'.");
         }
 
+        // Offload the synchronous traversal to a worker thread: the caller
+        // is the WPF UI thread, and a large tree must neither freeze the
+        // window nor make Cancel unusable. The token is passed both to
+        // Task.Run (so an already-cancelled call never starts) and into
+        // DiscoverCore (so mid-scan cancellation aborts promptly).
+        return Task.Run<IReadOnlyList<DiscoveredRepository>>(
+            () => DiscoverCore(root, maxDepth, cancellationToken),
+            cancellationToken);
+    }
+
+    internal IReadOnlyList<DiscoveredRepository> DiscoverCore(
+        string root,
+        int maxDepth,
+        CancellationToken cancellationToken)
+    {
         _logger.LogInformation(
             "Discovering repositories under {Root} (max depth {Depth})",
             root, maxDepth);
@@ -74,7 +89,10 @@ public sealed class RepositoryDiscoveryService : IRepositoryDiscoveryService
                 continue;
             }
 
-            foreach (var child in EnumerateChildDirectories(current))
+            // Lazy enumeration: each directory is yielded one at a time so
+            // cancellation is observed between entries instead of being
+            // stuck inside a single blocking ToList() call.
+            foreach (var child in EnumerateChildDirectories(current, cancellationToken))
             {
                 cancellationToken.ThrowIfCancellationRequested();
 
@@ -100,7 +118,7 @@ public sealed class RepositoryDiscoveryService : IRepositoryDiscoveryService
         found.Sort((a, b) => string.Compare(
             a.Path, b.Path, StringComparison.OrdinalIgnoreCase));
 
-        return Task.FromResult<IReadOnlyList<DiscoveredRepository>>(found);
+        return found;
     }
 
     private static DiscoveredRepository ToDiscovered(string path) =>
@@ -175,23 +193,67 @@ public sealed class RepositoryDiscoveryService : IRepositoryDiscoveryService
         return false;
     }
 
-    private static IEnumerable<string> EnumerateChildDirectories(string parent)
+    /// <summary>
+    /// Lazily yields child directories one at a time. A single slow
+    /// network/disk enumeration must not become an uncancellable unit:
+    /// the token is checked before every yield so Cancel aborts promptly.
+    /// Per-entry IO failures end enumeration of that parent, never the scan.
+    /// </summary>
+    private static IEnumerable<string> EnumerateChildDirectories(
+        string parent,
+        CancellationToken cancellationToken)
     {
+        IEnumerator<string> enumerator;
+
         try
         {
-            return Directory.EnumerateDirectories(parent).ToList();
+            enumerator = Directory.EnumerateDirectories(parent).GetEnumerator();
         }
         catch (UnauthorizedAccessException)
         {
-            return [];
+            yield break;
         }
         catch (DirectoryNotFoundException)
         {
-            return [];
+            yield break;
         }
         catch (IOException)
         {
-            return [];
+            yield break;
+        }
+
+        using (enumerator)
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                string current;
+
+                try
+                {
+                    if (!enumerator.MoveNext())
+                    {
+                        yield break;
+                    }
+
+                    current = enumerator.Current;
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    yield break;
+                }
+                catch (DirectoryNotFoundException)
+                {
+                    yield break;
+                }
+                catch (IOException)
+                {
+                    yield break;
+                }
+
+                yield return current;
+            }
         }
     }
 }

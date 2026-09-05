@@ -236,49 +236,89 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         return await FetchRepositoryAsync(configuration, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<RepositoryDashboardItem>> FetchAllAsync(
+    public async Task<RepositoryBatchResult> FetchAllAsync(
         CancellationToken cancellationToken)
     {
-        await EnsureStateLoadedAsync(cancellationToken);
-        var configurations = await _store.LoadAsync(cancellationToken);
+        IReadOnlyList<RepositoryConfiguration> configurations;
+
+        try
+        {
+            await EnsureStateLoadedAsync(cancellationToken);
+            configurations = await _store.LoadAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancelled before any repository started: nothing completed.
+            return RepositoryBatchResult.Cancelled();
+        }
 
         _logger.LogInformation(
             "Fetch-all started for {Count} repositories", configurations.Count);
 
         var stopwatch = Stopwatch.StartNew();
 
-        try
+        // Start every repository at once; the global semaphore inside
+        // FetchRepositoryAsync bounds actual Git parallelism to 4.
+        // Each task isolates both failures (returned as failed items) and
+        // cancellation (returned as a cancelled marker), so Task.WhenAll
+        // never throws and completed work is never lost when Cancel arrives.
+        var tasks = configurations
+            .Select(c => FetchOneGuardedAsync(c, cancellationToken))
+            .ToList();
+
+        var outcomes = await Task.WhenAll(tasks);
+
+        var completed = outcomes
+            .Where(o => o.Item is not null)
+            .Select(o => o.Item!)
+            .ToList();
+        var wasCancelled = outcomes.Any(o => o.Cancelled);
+
+        var failed = completed.Count(
+            i => i.FetchError is not null || i.InspectionError is not null);
+
+        stopwatch.Stop();
+
+        if (wasCancelled)
         {
-            // Start every repository at once; the global semaphore inside
-            // FetchRepositoryAsync bounds actual Git parallelism to 4.
-            // Each task isolates its own failures, so Task.WhenAll collects
-            // every result — one repository never aborts the batch — except
-            // for cancellation, which still aborts.
-            var tasks = configurations
-                .Select(c => FetchRepositoryAsync(c, cancellationToken))
-                .ToList();
-
-            var items = await Task.WhenAll(tasks);
-
-            var failed = items.Count(
-                i => i.FetchError is not null || i.InspectionError is not null);
-
-            stopwatch.Stop();
+            _logger.LogInformation(
+                "Fetch-all cancelled: {Completed} of {Total} repositories completed, "
+                + "{Failed} failed in {DurationSec:F2} sec",
+                completed.Count, configurations.Count, failed,
+                stopwatch.Elapsed.TotalSeconds);
+        }
+        else
+        {
             _logger.LogInformation(
                 "Fetch-all completed: {Total} repositories, {Succeeded} succeeded, "
                 + "{Failed} failed in {DurationSec:F2} sec",
-                items.Length, items.Length - failed, failed,
+                completed.Count, completed.Count - failed, failed,
                 stopwatch.Elapsed.TotalSeconds);
+        }
 
-            return items;
+        return new RepositoryBatchResult
+        {
+            CompletedItems = completed,
+            WasCancelled = wasCancelled
+        };
+    }
+
+    /// <summary>
+    /// One guarded fetch: failures are already items, cancellation becomes
+    /// a marker — never an exception that would make WhenAll drop successes.
+    /// Locks/semaphore are released via finally inside FetchRepositoryAsync.
+    /// </summary>
+    private async Task<(RepositoryDashboardItem? Item, bool Cancelled)> FetchOneGuardedAsync(
+        RepositoryConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return (await FetchRepositoryAsync(configuration, cancellationToken), false);
         }
         catch (OperationCanceledException)
         {
-            stopwatch.Stop();
-            _logger.LogInformation(
-                "Fetch-all cancelled after {DurationSec:F2} sec",
-                stopwatch.Elapsed.TotalSeconds);
-            throw;
+            return (null, true);
         }
     }
 
@@ -301,52 +341,84 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         return await UpdateRepositoryAsync(configuration, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<RepositoryDashboardItem>> UpdateAllAsync(
+    public async Task<RepositoryBatchResult> UpdateAllAsync(
         CancellationToken cancellationToken)
     {
-        await EnsureStateLoadedAsync(cancellationToken);
-        var configurations = await _store.LoadAsync(cancellationToken);
+        IReadOnlyList<RepositoryConfiguration> configurations;
+
+        try
+        {
+            await EnsureStateLoadedAsync(cancellationToken);
+            configurations = await _store.LoadAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return RepositoryBatchResult.Cancelled();
+        }
 
         _logger.LogInformation(
             "Update-all started for {Count} repositories", configurations.Count);
 
         var stopwatch = Stopwatch.StartNew();
 
-        try
+        // Same guarded pattern as FetchAllAsync: skips/failures are items,
+        // cancellation is a marker — completed work is never dropped.
+        var tasks = configurations
+            .Select(c => UpdateOneGuardedAsync(c, cancellationToken))
+            .ToList();
+
+        var outcomes = await Task.WhenAll(tasks);
+
+        var completed = outcomes
+            .Where(o => o.Item is not null)
+            .Select(o => o.Item!)
+            .ToList();
+        var wasCancelled = outcomes.Any(o => o.Cancelled);
+
+        var updated = completed.Count(
+            i => i.UpdateResult?.Outcome == RepositoryUpdateOutcome.Updated);
+        var failed = completed.Count(
+            i => i.InspectionError is not null
+                || i.FetchError is not null
+                || i.UpdateResult?.Outcome == RepositoryUpdateOutcome.Failed);
+
+        stopwatch.Stop();
+
+        if (wasCancelled)
         {
-            // Same pattern as FetchAllAsync: start everything at once, let the
-            // shared global semaphore bound Git parallelism to 4, and collect
-            // every per-repository result. Skips and failures never abort
-            // the batch — only cancellation does.
-            var tasks = configurations
-                .Select(c => UpdateRepositoryAsync(c, cancellationToken))
-                .ToList();
-
-            var items = await Task.WhenAll(tasks);
-
-            var updated = items.Count(
-                i => i.UpdateResult?.Outcome == RepositoryUpdateOutcome.Updated);
-            var failed = items.Count(
-                i => i.InspectionError is not null
-                    || i.FetchError is not null
-                    || i.UpdateResult?.Outcome == RepositoryUpdateOutcome.Failed);
-
-            stopwatch.Stop();
+            _logger.LogInformation(
+                "Update-all cancelled: {Completed} of {Total} repositories completed, "
+                + "{Updated} updated, {Failed} failed in {DurationSec:F2} sec",
+                completed.Count, configurations.Count, updated, failed,
+                stopwatch.Elapsed.TotalSeconds);
+        }
+        else
+        {
             _logger.LogInformation(
                 "Update-all completed: {Total} repositories, {Updated} updated, "
                 + "{Failed} failed in {DurationSec:F2} sec",
-                items.Length, updated, failed,
+                completed.Count, updated, failed,
                 stopwatch.Elapsed.TotalSeconds);
+        }
 
-            return items;
+        return new RepositoryBatchResult
+        {
+            CompletedItems = completed,
+            WasCancelled = wasCancelled
+        };
+    }
+
+    private async Task<(RepositoryDashboardItem? Item, bool Cancelled)> UpdateOneGuardedAsync(
+        RepositoryConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return (await UpdateRepositoryAsync(configuration, cancellationToken), false);
         }
         catch (OperationCanceledException)
         {
-            stopwatch.Stop();
-            _logger.LogInformation(
-                "Update-all cancelled after {DurationSec:F2} sec",
-                stopwatch.Elapsed.TotalSeconds);
-            throw;
+            return (null, true);
         }
     }
 

@@ -69,7 +69,15 @@ public static class GitErrorClassifier
         || text.Contains("logon failed", StringComparison.Ordinal)
         || text.Contains("invalid credentials", StringComparison.Ordinal)
         || text.Contains("401 unauthorized", StringComparison.Ordinal)
-        || text.Contains("403 forbidden", StringComparison.Ordinal);
+        || text.Contains("403 forbidden", StringComparison.Ordinal)
+        // libcurl/Git HTTP errors: "The requested URL returned error: 403".
+        // Must precede the broad "unable to access" network pattern.
+        || text.Contains("returned error: 401", StringComparison.Ordinal)
+        || text.Contains("returned error: 403", StringComparison.Ordinal)
+        || text.Contains("access denied", StringComparison.Ordinal)
+        // SSH: no access rights on the remote.
+        || text.Contains("could not read from remote repository", StringComparison.Ordinal)
+        || text.Contains("please make sure you have the correct access rights", StringComparison.Ordinal);
 
     private static bool IsRemoteNotFound(string text) =>
         text.Contains("repository not found", StringComparison.Ordinal)
