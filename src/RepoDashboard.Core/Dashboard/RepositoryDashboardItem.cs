@@ -25,5 +25,13 @@ public sealed record RepositoryDashboardItem
     /// </summary>
     public string? InspectionError { get; init; }
 
+    /// <summary>
+    /// Raw fetch failure for this repository, if the last fetch attempt
+    /// failed. Null when no fetch was attempted or the last fetch succeeded.
+    /// A fetch failure never hides local state: the snapshot and decision
+    /// still describe the last successful inspection.
+    /// </summary>
+    public string? FetchError { get; init; }
+
     public DateTimeOffset? LastSuccessfulFetch { get; init; }
 }

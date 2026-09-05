@@ -33,10 +33,10 @@ public partial class App : Application
                 services.AddSingleton<IRepositoryConfigurationStore, JsonRepositoryConfigurationStore>();
                 services.AddSingleton<IDivergenceCalculator, DivergenceCalculator>();
                 services.AddSingleton<IRepositoryInspector, RepositoryInspector>();
+                services.AddSingleton<IRepositoryFetcher, RepositoryFetcher>();
                 services.AddSingleton<IUpdateEligibilityClassifier, UpdateEligibilityClassifier>();
                 services.AddSingleton<IRepositoryDashboardService, RepositoryDashboardService>();
                 services.AddSingleton<IFolderPickerService, FolderPickerService>();
-                // services.AddSingleton<IRepositoryFetcher, RepositoryFetcher>();
                 // services.AddSingleton<IRepositoryUpdater, RepositoryUpdater>();
 
                 services.AddSingleton<MainWindowViewModel>();
