@@ -390,9 +390,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
             selected.Update(item);
             MarkCompletedWhenQuiet(selected, "Fetched");
-            StatusText = item.FetchError is null
-                ? $"Fetched '{selected.Name}'."
-                : $"Fetch failed for '{selected.Name}': {item.FetchError}";
+            StatusText =
+                item.FetchError is not null
+                    ? $"Fetch failed for '{selected.Name}': {item.FetchError}"
+                    : item.InspectionError is not null
+                        ? $"Fetched '{selected.Name}', but refreshing repository status failed: {item.InspectionError}"
+                        : $"Fetched '{selected.Name}'.";
         }
         catch (OperationCanceledException)
         {

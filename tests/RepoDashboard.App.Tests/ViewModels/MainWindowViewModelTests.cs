@@ -405,6 +405,30 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task Fetch_with_failed_reinspection_reports_both()
+    {
+        // The fetch itself succeeded (timestamp-worthy) but the mandatory
+        // re-inspection threw: the row must not claim a clean fetch.
+        var failed = FailedItem("Broken") with
+        {
+            LastOperation = RepositoryOperationType.Fetch
+        };
+        var dashboard = new FakeDashboard([failed]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker());
+        await sut.InitializeAsync();
+        sut.SelectedRepository = sut.Repositories[0];
+
+        await sut.FetchCommand.ExecuteAsync(null);
+
+        sut.StatusText.Should().Be(
+            "Fetched 'Broken', but refreshing repository status failed: " +
+            "git status unexpectedly failed");
+        sut.Repositories[0].Activity.Should().Be(RepositoryActivity.Failed);
+        sut.Repositories[0].DetailsLastOperation.Should().Be("Inspection failed");
+    }
+
+    [Fact]
     public async Task Refresh_marks_successful_row_completed()
     {
         var dashboard = new FakeDashboard([Item("Store")]);

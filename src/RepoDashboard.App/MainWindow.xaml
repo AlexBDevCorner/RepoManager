@@ -166,43 +166,65 @@
             </StackPanel>
         </Border>
 
-        <DataGrid x:Name="RepositoriesGrid"
-                   ItemsSource="{Binding Repositories}"
+        <DataGrid ItemsSource="{Binding Repositories}"
                    SelectedItem="{Binding SelectedRepository, Mode=TwoWay}"
                    AutoGenerateColumns="False"
                    IsReadOnly="True"
                    SelectionMode="Single">
             <DataGrid.RowStyle>
-                <!-- Per-repository menu: the row itself travels as the
-                     command parameter, so actions never depend on which
-                     row happens to be selected. -->
+                <!-- Per-repository menu: commands come from the main view
+                     model stashed in the row's Tag (resolved while the row
+                     is in the DataGrid visual tree), and the row itself
+                     travels as the command parameter — never the selection.
+                     No x:Reference: it is a XAML 2009 feature unsupported
+                     in markup-compiled WPF. Both bindings go through
+                     PlacementTarget explicitly because a ContextMenu lives
+                     outside the normal visual tree and its inherited
+                     DataContext can be stale on virtualized rows. -->
                 <Style TargetType="DataGridRow">
+                    <Setter Property="Tag"
+                            Value="{Binding DataContext,
+                                    RelativeSource={RelativeSource AncestorType=DataGrid}}" />
                     <Setter Property="ContextMenu">
                         <Setter.Value>
                             <ContextMenu>
                                 <MenuItem Header="Refresh"
-                                          Command="{Binding DataContext.RefreshCommand, Source={x:Reference RepositoriesGrid}}"
-                                          CommandParameter="{Binding}" />
+                                          Command="{Binding PlacementTarget.Tag.RefreshCommand,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.DataContext,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <MenuItem Header="Fetch"
-                                          Command="{Binding DataContext.FetchCommand, Source={x:Reference RepositoriesGrid}}"
-                                          CommandParameter="{Binding}" />
+                                          Command="{Binding PlacementTarget.Tag.FetchCommand,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.DataContext,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <MenuItem Header="Update"
-                                          Command="{Binding DataContext.UpdateCommand, Source={x:Reference RepositoriesGrid}}"
-                                          CommandParameter="{Binding}" />
+                                          Command="{Binding PlacementTarget.Tag.UpdateCommand,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.DataContext,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <Separator />
                                 <MenuItem Header="Open Folder"
-                                          Command="{Binding DataContext.OpenFolderCommand, Source={x:Reference RepositoriesGrid}}"
-                                          CommandParameter="{Binding}" />
+                                          Command="{Binding PlacementTarget.Tag.OpenFolderCommand,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.DataContext,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <MenuItem Header="Open Terminal"
-                                          Command="{Binding DataContext.OpenTerminalCommand, Source={x:Reference RepositoriesGrid}}"
-                                          CommandParameter="{Binding}" />
+                                          Command="{Binding PlacementTarget.Tag.OpenTerminalCommand,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.DataContext,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <MenuItem Header="Copy Path"
-                                          Command="{Binding DataContext.CopyPathCommand, Source={x:Reference RepositoriesGrid}}"
-                                          CommandParameter="{Binding}" />
+                                          Command="{Binding PlacementTarget.Tag.CopyPathCommand,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.DataContext,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <Separator />
                                 <MenuItem Header="Remove from dashboard"
-                                          Command="{Binding DataContext.RemoveCommand, Source={x:Reference RepositoriesGrid}}"
-                                          CommandParameter="{Binding}" />
+                                          Command="{Binding PlacementTarget.Tag.RemoveCommand,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.DataContext,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                             </ContextMenu>
                         </Setter.Value>
                     </Setter>
