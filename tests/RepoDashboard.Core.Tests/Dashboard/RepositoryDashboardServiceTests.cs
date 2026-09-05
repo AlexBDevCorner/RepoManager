@@ -114,11 +114,43 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
         }
     }
 
+    private sealed class StubUpdater : IRepositoryUpdater
+    {
+        private readonly Func<RepositoryConfiguration, RepositoryUpdateResult> _update;
+
+        public int Calls { get; private set; }
+
+        public StubUpdater(
+            Func<RepositoryConfiguration, RepositoryUpdateResult>? update = null)
+        {
+            _update = update ?? (c => new RepositoryUpdateResult
+            {
+                RepositoryId = c.Id,
+                Outcome = RepositoryUpdateOutcome.Failed,
+                Message = "Unexpected update call."
+            });
+        }
+
+        public Task<RepositoryUpdateResult> UpdateAsync(
+            RepositoryConfiguration repository,
+            CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.FromResult(_update(repository));
+        }
+    }
+
     private static RepositoryDashboardService CreateSut(
         InMemoryStore store,
         StubInspector inspector,
-        IRepositoryFetcher? fetcher = null) =>
-        new(store, inspector, new UpdateEligibilityClassifier(), fetcher ?? new StubFetcher());
+        IRepositoryFetcher? fetcher = null,
+        IRepositoryUpdater? updater = null) =>
+        new(
+            store,
+            inspector,
+            new UpdateEligibilityClassifier(),
+            fetcher ?? new StubFetcher(),
+            updater ?? new StubUpdater());
 
     private string CreateTempDirectory()
     {
@@ -539,17 +571,46 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
         refreshed.FetchError.Should().BeNull();
     }
 
+    /// <summary>
+    /// Tracks concurrent entries across one or more stubs. Sharing a single
+    /// probe between a fetcher and an updater proves they mutually exclude
+    /// on the same repository (the PR #8 review requirement).
+    /// </summary>
+    private sealed class SharedProbe
+    {
+        private int _current;
+
+        public int Max;
+
+        public void Enter()
+        {
+            var current = Interlocked.Increment(ref _current);
+
+            int previous;
+            do
+            {
+                previous = Max;
+            }
+            while (previous < current &&
+                Interlocked.CompareExchange(ref Max, current, previous) != previous);
+        }
+
+        public void Exit() => Interlocked.Decrement(ref _current);
+    }
+
     private sealed class TrackingFetcher : IRepositoryFetcher
     {
         private readonly TimeSpan _delay;
-        private int _current;
+        private readonly SharedProbe _probe;
 
         public int Calls;
-        public int MaxConcurrent;
 
-        public TrackingFetcher(TimeSpan delay)
+        public int MaxConcurrent => _probe.Max;
+
+        public TrackingFetcher(TimeSpan delay, SharedProbe? probe = null)
         {
             _delay = delay;
+            _probe = probe ?? new SharedProbe();
         }
 
         public async Task<RepositoryOperationResult> FetchAsync(
@@ -557,15 +618,7 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
             CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref Calls);
-            var current = Interlocked.Increment(ref _current);
-
-            int previous;
-            do
-            {
-                previous = MaxConcurrent;
-            }
-            while (previous < current &&
-                Interlocked.CompareExchange(ref MaxConcurrent, current, previous) != previous);
+            _probe.Enter();
 
             try
             {
@@ -580,7 +633,62 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
             }
             finally
             {
-                Interlocked.Decrement(ref _current);
+                _probe.Exit();
+            }
+        }
+    }
+
+    private sealed class TrackingUpdater : IRepositoryUpdater
+    {
+        private readonly TimeSpan _delay;
+        private readonly SharedProbe _probe;
+        private readonly Func<RepositoryConfiguration, RepositorySnapshot> _snapshot;
+
+        public int Calls;
+
+        public int MaxConcurrent => _probe.Max;
+
+        public TrackingUpdater(
+            TimeSpan delay,
+            SharedProbe? probe = null,
+            Func<RepositoryConfiguration, RepositorySnapshot>? snapshot = null)
+        {
+            _delay = delay;
+            _probe = probe ?? new SharedProbe();
+            _snapshot = snapshot ?? UpToDateSnapshot;
+        }
+
+        public async Task<RepositoryUpdateResult> UpdateAsync(
+            RepositoryConfiguration repository,
+            CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref Calls);
+            _probe.Enter();
+
+            try
+            {
+                await Task.Delay(_delay, cancellationToken);
+                return new RepositoryUpdateResult
+                {
+                    RepositoryId = repository.Id,
+                    Outcome = RepositoryUpdateOutcome.Updated,
+                    Message = "Fast-forwarded 'main' by 1 commit(s) from 'origin/main'.",
+                    Decision = new UpdateDecision(
+                        UpdateEligibility.CanFastForward,
+                        "Current branch can fast-forward by 1 commit(s)."),
+                    FetchResult = new RepositoryOperationResult
+                    {
+                        Success = true,
+                        Operation = RepositoryOperationType.Fetch,
+                        Message = "Fetched 'origin' (pruned).",
+                        Duration = TimeSpan.Zero
+                    },
+                    FinalSnapshot = _snapshot(repository)
+                };
+            }
+            finally
+            {
+                _probe.Exit();
             }
         }
     }
@@ -642,5 +750,323 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
 
         items.Should().HaveCount(4);
         fetcher.MaxConcurrent.Should().BeInRange(2, 4);
+    }
+
+    private static RepositoryOperationResult SuccessfulFetch() =>
+        new()
+        {
+            Success = true,
+            Operation = RepositoryOperationType.Fetch,
+            Message = "Fetched 'origin' (pruned).",
+            Duration = TimeSpan.Zero
+        };
+
+    private static RepositoryOperationResult FailedFetch() =>
+        new()
+        {
+            Success = false,
+            Operation = RepositoryOperationType.Fetch,
+            Message = "git fetch origin --prune failed with exit code 128: boom",
+            ExitCode = 128,
+            Duration = TimeSpan.Zero
+        };
+
+    [Fact]
+    public async Task UpdateAsync_SuccessfulUpdate_UsesFinalSnapshotWithoutReinspecting()
+    {
+        var configuration = Config("Store");
+        var store = new InMemoryStore([configuration]);
+        var inspector = new StubInspector(UpToDateSnapshot);
+        var updater = new StubUpdater(c => new RepositoryUpdateResult
+        {
+            RepositoryId = c.Id,
+            Outcome = RepositoryUpdateOutcome.Updated,
+            Message = "Fast-forwarded 'main' by 1 commit(s) from 'origin/main'.",
+            Decision = new UpdateDecision(
+                UpdateEligibility.CanFastForward,
+                "Current branch can fast-forward by 1 commit(s)."),
+            FetchResult = SuccessfulFetch(),
+            FinalSnapshot = UpToDateSnapshot(c)
+        });
+        var sut = CreateSut(store, inspector, updater: updater);
+
+        var item = await sut.UpdateAsync(configuration.Id, CancellationToken.None);
+
+        updater.Calls.Should().Be(1);
+        // The updater's final re-inspection is authoritative: no third inspect.
+        inspector.Calls.Should().Be(0);
+        item.Snapshot.Should().BeEquivalentTo(
+            UpToDateSnapshot(configuration),
+            o => o.Excluding(s => s.InspectedAt));
+        item.UpdateResult.Should().NotBeNull();
+        item.UpdateResult!.Outcome.Should().Be(RepositoryUpdateOutcome.Updated);
+        item.UpdateResult.Message.Should().Contain("Fast-forward");
+        item.InspectionError.Should().BeNull();
+        item.FetchError.Should().BeNull();
+        // An update starts with a successful fetch, so it stamps the fetch time.
+        item.LastSuccessfulFetch.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_UnknownId_ThrowsKeyNotFound()
+    {
+        var updater = new StubUpdater();
+        var sut = CreateSut(
+            new InMemoryStore([Config()]),
+            new StubInspector(UpToDateSnapshot),
+            updater: updater);
+
+        var act = () => sut.UpdateAsync(Guid.NewGuid(), CancellationToken.None);
+
+        await act.Should().ThrowAsync<KeyNotFoundException>();
+        updater.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_Skipped_PreservesReasonAndFetchTimestamp()
+    {
+        var configuration = Config("Store");
+        var store = new InMemoryStore([configuration]);
+        var inspector = new StubInspector(UpToDateSnapshot);
+        var updater = new StubUpdater(c => new RepositoryUpdateResult
+        {
+            RepositoryId = c.Id,
+            Outcome = RepositoryUpdateOutcome.Skipped,
+            Message = "The working tree contains uncommitted changes.",
+            Decision = new UpdateDecision(
+                UpdateEligibility.Dirty,
+                "The working tree contains uncommitted changes."),
+            FetchResult = SuccessfulFetch(),
+            FinalSnapshot = UpToDateSnapshot(c)
+        });
+        var sut = CreateSut(store, inspector, updater: updater);
+
+        var item = await sut.UpdateAsync(configuration.Id, CancellationToken.None);
+
+        inspector.Calls.Should().Be(0);
+        item.UpdateResult!.Outcome.Should().Be(RepositoryUpdateOutcome.Skipped);
+        item.UpdateResult.Message.Should().Contain("uncommitted changes");
+        item.InspectionError.Should().BeNull();
+        item.LastSuccessfulFetch.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_FailedWithoutSnapshot_FallsBackToInspection()
+    {
+        var configuration = Config("Store");
+        var store = new InMemoryStore([configuration]);
+        var inspector = new StubInspector(UpToDateSnapshot);
+        var updater = new StubUpdater(c => new RepositoryUpdateResult
+        {
+            RepositoryId = c.Id,
+            Outcome = RepositoryUpdateOutcome.Failed,
+            Message = "git fetch origin --prune failed with exit code 128: boom",
+            FetchResult = FailedFetch(),
+            FinalSnapshot = null
+        });
+        var sut = CreateSut(store, inspector, updater: updater);
+
+        var item = await sut.UpdateAsync(configuration.Id, CancellationToken.None);
+
+        inspector.Calls.Should().Be(1);
+        item.Snapshot.CurrentBranch.Should().Be("main");
+        item.UpdateResult!.Outcome.Should().Be(RepositoryUpdateOutcome.Failed);
+        item.UpdateResult.Message.Should().Contain("boom");
+        item.InspectionError.Should().BeNull();
+        item.LastSuccessfulFetch.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ThrowingUpdater_BuildsFailedRowWithOutcome()
+    {
+        var configuration = Config("Store");
+        var store = new InMemoryStore([configuration]);
+        var inspector = new StubInspector(UpToDateSnapshot);
+        var updater = new StubUpdater(
+            _ => throw new InvalidOperationException("boom"));
+        var sut = CreateSut(store, inspector, updater: updater);
+
+        var item = await sut.UpdateAsync(configuration.Id, CancellationToken.None);
+
+        item.UpdateResult.Should().NotBeNull();
+        item.UpdateResult!.Outcome.Should().Be(RepositoryUpdateOutcome.Failed);
+        item.UpdateResult.Message.Should().Contain("boom");
+        item.Snapshot.CurrentBranch.Should().Be("main");
+        item.LastSuccessfulFetch.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpdateAllAsync_CollectsMixedOutcomesInOrder()
+    {
+        var first = Config("First", """C:\Source\Repos\First""");
+        var broken = Config("Broken", """C:\Source\Repos\Broken""");
+        var third = Config("Third", """C:\Source\Repos\Third""");
+        var store = new InMemoryStore([first, broken, third]);
+        var inspector = new StubInspector(UpToDateSnapshot);
+        var updater = new StubUpdater(c => c.Name switch
+        {
+            "Broken" => new RepositoryUpdateResult
+            {
+                RepositoryId = c.Id,
+                Outcome = RepositoryUpdateOutcome.Failed,
+                Message = "update boom",
+                FetchResult = FailedFetch(),
+                FinalSnapshot = null
+            },
+            "Third" => new RepositoryUpdateResult
+            {
+                RepositoryId = c.Id,
+                Outcome = RepositoryUpdateOutcome.Skipped,
+                Message = "Current branch is already up to date.",
+                Decision = new UpdateDecision(
+                    UpdateEligibility.AlreadyUpToDate,
+                    "Current branch is already up to date."),
+                FetchResult = SuccessfulFetch(),
+                FinalSnapshot = UpToDateSnapshot(c)
+            },
+            _ => new RepositoryUpdateResult
+            {
+                RepositoryId = c.Id,
+                Outcome = RepositoryUpdateOutcome.Updated,
+                Message = "Fast-forwarded 'main'.",
+                Decision = new UpdateDecision(
+                    UpdateEligibility.CanFastForward,
+                    "Current branch can fast-forward by 1 commit(s)."),
+                FetchResult = SuccessfulFetch(),
+                FinalSnapshot = UpToDateSnapshot(c)
+            }
+        });
+        var sut = CreateSut(store, inspector, updater: updater);
+
+        var items = await sut.UpdateAllAsync(CancellationToken.None);
+
+        items.Should().HaveCount(3);
+        updater.Calls.Should().Be(3);
+        // Only the failed-without-snapshot entry needed a fallback inspect.
+        inspector.Calls.Should().Be(1);
+
+        items.Select(i => i.Configuration.Name)
+            .Should().Equal("First", "Broken", "Third");
+
+        items[0].UpdateResult!.Outcome.Should().Be(RepositoryUpdateOutcome.Updated);
+        items[0].LastSuccessfulFetch.Should().NotBeNull();
+
+        var failed = items[1];
+        failed.UpdateResult!.Outcome.Should().Be(RepositoryUpdateOutcome.Failed);
+        failed.UpdateResult.Message.Should().Contain("update boom");
+        failed.InspectionError.Should().BeNull();
+        failed.Snapshot.CurrentBranch.Should().Be("main");
+        failed.LastSuccessfulFetch.Should().BeNull();
+
+        items[2].UpdateResult!.Outcome.Should().Be(RepositoryUpdateOutcome.Skipped);
+        items[2].LastSuccessfulFetch.Should().NotBeNull();
+    }
+
+    [Fact]
+    public async Task UpdateAllAsync_EmptyStore_ReturnsEmpty()
+    {
+        var updater = new StubUpdater();
+        var sut = CreateSut(
+            new InMemoryStore(),
+            new StubInspector(UpToDateSnapshot),
+            updater: updater);
+
+        var items = await sut.UpdateAllAsync(CancellationToken.None);
+
+        items.Should().BeEmpty();
+        updater.Calls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_SuccessThenRefresh_PreservesFetchTimestampButNotOutcome()
+    {
+        var configuration = Config("Store");
+        var store = new InMemoryStore([configuration]);
+        var sut = CreateSut(
+            store,
+            new StubInspector(UpToDateSnapshot),
+            updater: new StubUpdater(c => new RepositoryUpdateResult
+            {
+                RepositoryId = c.Id,
+                Outcome = RepositoryUpdateOutcome.Updated,
+                Message = "Fast-forwarded 'main'.",
+                FetchResult = SuccessfulFetch(),
+                FinalSnapshot = UpToDateSnapshot(c)
+            }));
+
+        var updated = await sut.UpdateAsync(configuration.Id, CancellationToken.None);
+        var refreshed = await sut.RefreshAsync(configuration.Id, CancellationToken.None);
+
+        updated.LastSuccessfulFetch.Should().NotBeNull();
+        refreshed.LastSuccessfulFetch.Should().Be(updated.LastSuccessfulFetch);
+        // A local refresh is not an update attempt: no stale outcome survives.
+        refreshed.UpdateResult.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task UpdateAllAsync_BoundsConcurrencyToFour()
+    {
+        var configurations = Enumerable.Range(0, 10)
+            .Select(i => Config($"Repo{i}", $"""C:\Source\Repos\Repo{i}"""))
+            .ToList();
+        var store = new InMemoryStore(configurations);
+        var updater = new TrackingUpdater(TimeSpan.FromMilliseconds(100));
+        var sut = CreateSut(
+            store,
+            new StubInspector(UpToDateSnapshot),
+            updater: updater);
+
+        var items = await sut.UpdateAllAsync(CancellationToken.None);
+
+        items.Should().HaveCount(10);
+        items.Should().OnlyContain(
+            i => i.UpdateResult != null &&
+                i.UpdateResult.Outcome == RepositoryUpdateOutcome.Updated);
+        updater.MaxConcurrent.Should().BeLessThanOrEqualTo(4);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_SameRepository_SerializesConcurrentUpdates()
+    {
+        var configuration = Config("Store");
+        var store = new InMemoryStore([configuration]);
+        var updater = new TrackingUpdater(TimeSpan.FromMilliseconds(200));
+        var sut = CreateSut(
+            store,
+            new StubInspector(UpToDateSnapshot),
+            updater: updater);
+
+        var first = sut.UpdateAsync(configuration.Id, CancellationToken.None);
+        var second = sut.UpdateAsync(configuration.Id, CancellationToken.None);
+        await Task.WhenAll(first, second);
+
+        updater.Calls.Should().Be(2);
+        updater.MaxConcurrent.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task FetchAndUpdate_SameRepository_SerializeAcrossOperations()
+    {
+        // The PR #8 review requirement: fetch and update share one lock
+        // registry and one semaphore, so they can never overlap on the
+        // same repository even though they are different operations.
+        var configuration = Config("Store");
+        var store = new InMemoryStore([configuration]);
+        var probe = new SharedProbe();
+        var fetcher = new TrackingFetcher(TimeSpan.FromMilliseconds(200), probe);
+        var updater = new TrackingUpdater(TimeSpan.FromMilliseconds(200), probe);
+        var sut = CreateSut(
+            store,
+            new StubInspector(UpToDateSnapshot),
+            fetcher,
+            updater);
+
+        var fetch = sut.FetchAsync(configuration.Id, CancellationToken.None);
+        var update = sut.UpdateAsync(configuration.Id, CancellationToken.None);
+        await Task.WhenAll(fetch, update);
+
+        fetcher.Calls.Should().Be(1);
+        updater.Calls.Should().Be(1);
+        probe.Max.Should().Be(1);
     }
 }

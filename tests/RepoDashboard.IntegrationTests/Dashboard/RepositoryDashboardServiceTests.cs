@@ -10,14 +10,22 @@ namespace RepoDashboard.IntegrationTests.Dashboard;
 
 public sealed class RepositoryDashboardServiceTests
 {
-    private static RepositoryDashboardService CreateSut(string storePath) =>
-        new(
+    private static RepositoryDashboardService CreateSut(string storePath)
+    {
+        var git = new GitCommandRunner();
+        var inspector = new RepositoryInspector(
+            git,
+            new DivergenceCalculator(git));
+        var fetcher = new RepositoryFetcher(git);
+        var classifier = new UpdateEligibilityClassifier();
+
+        return new(
             new JsonRepositoryConfigurationStore(storePath),
-            new RepositoryInspector(
-                new GitCommandRunner(),
-                new DivergenceCalculator(new GitCommandRunner())),
-            new UpdateEligibilityClassifier(),
-            new RepositoryFetcher(new GitCommandRunner()));
+            inspector,
+            classifier,
+            fetcher,
+            new RepositoryUpdater(git, fetcher, inspector, classifier));
+    }
 
     private static string StorePath(GitTestRepositoryFactory factory) =>
         Path.Combine(factory.RootPath, "config", "repositories.json");
@@ -188,5 +196,117 @@ public sealed class RepositoryDashboardServiceTests
         broken.FetchError.Should().NotBeNullOrWhiteSpace();
         broken.LastSuccessfulFetch.Should().BeNull();
         broken.Snapshot.DirectoryExists.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_BehindOnly_UpdatesAndReturnsFreshRow()
+    {
+        using var factory = new GitTestRepositoryFactory();
+        var remote = await factory.CreateBareRepositoryAsync();
+        var repoA = await factory.CloneAsync(remote, "repo-a");
+        await factory.CommitFileAsync(repoA, "a.txt", "A", "Commit A");
+        await factory.PushAsync(repoA);
+        var repoB = await factory.CloneAsync(remote, "repo-b");
+
+        var sut = CreateSut(StorePath(factory));
+        var added = await sut.AddAsync(repoB, CancellationToken.None);
+
+        await factory.CommitFileAsync(repoA, "b.txt", "B", "Commit B");
+        await factory.PushAsync(repoA);
+
+        var updated = await sut.UpdateAsync(
+            added.Configuration.Id, CancellationToken.None);
+
+        updated.UpdateResult.Should().NotBeNull();
+        updated.UpdateResult!.Outcome.Should().Be(RepositoryUpdateOutcome.Updated);
+        updated.InspectionError.Should().BeNull();
+        updated.FetchError.Should().BeNull();
+        updated.LastSuccessfulFetch.Should().NotBeNull();
+        updated.Snapshot.DefaultBranchDivergence.Should().Be(new Divergence(0, 0));
+        updated.UpdateDecision.Eligibility
+            .Should().Be(UpdateEligibility.AlreadyUpToDate);
+        File.Exists(Path.Combine(repoB, "b.txt")).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_UnknownId_ThrowsKeyNotFound()
+    {
+        using var factory = new GitTestRepositoryFactory();
+
+        var sut = CreateSut(StorePath(factory));
+
+        var act = () => sut.UpdateAsync(Guid.NewGuid(), CancellationToken.None);
+
+        await act.Should().ThrowAsync<KeyNotFoundException>();
+    }
+
+    [Fact]
+    public async Task UpdateAllAsync_MixedOutcomes_CollectsAll()
+    {
+        using var factory = new GitTestRepositoryFactory();
+        var remote = await factory.CreateBareRepositoryAsync();
+        var repoA = await factory.CloneAsync(remote, "repo-a");
+        await factory.CommitFileAsync(repoA, "a.txt", "A", "Commit A");
+        await factory.PushAsync(repoA);
+
+        // current: already at the tip → Skipped (already up to date).
+        // behind: one commit behind the tip → Updated.
+        // Cloned at different times so their starting states differ.
+        var behind = await factory.CloneAsync(remote, "behind");
+
+        await factory.CommitFileAsync(repoA, "b.txt", "B", "Commit B");
+        await factory.PushAsync(repoA);
+
+        var current = await factory.CloneAsync(remote, "current");
+
+        var ghostPath = Path.Combine(
+            factory.RootPath, "does-not-exist", "ghost");
+
+        var storePath = StorePath(factory);
+        var seed = new JsonRepositoryConfigurationStore(storePath);
+        await seed.SaveAsync(
+            [
+                new RepositoryConfiguration
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "current",
+                    Path = current
+                },
+                new RepositoryConfiguration
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "ghost",
+                    Path = ghostPath
+                },
+                new RepositoryConfiguration
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "behind",
+                    Path = behind
+                }
+            ],
+            CancellationToken.None);
+
+        var sut = CreateSut(storePath);
+
+        var items = await sut.UpdateAllAsync(CancellationToken.None);
+
+        items.Should().HaveCount(3);
+        items.Select(i => i.Configuration.Name)
+            .Should().Equal("current", "ghost", "behind");
+
+        items[0].UpdateResult!.Outcome.Should().Be(RepositoryUpdateOutcome.Skipped);
+        items[0].UpdateResult!.Decision?.Eligibility
+            .Should().Be(UpdateEligibility.AlreadyUpToDate);
+        items[0].LastSuccessfulFetch.Should().NotBeNull();
+
+        items[1].UpdateResult!.Outcome.Should().Be(RepositoryUpdateOutcome.Failed);
+        items[1].Snapshot.DirectoryExists.Should().BeFalse();
+        items[1].LastSuccessfulFetch.Should().BeNull();
+
+        items[2].UpdateResult!.Outcome.Should().Be(RepositoryUpdateOutcome.Updated);
+        items[2].Snapshot.DefaultBranchDivergence.Should().Be(new Divergence(0, 0));
+        items[2].LastSuccessfulFetch.Should().NotBeNull();
+        File.Exists(Path.Combine(behind, "b.txt")).Should().BeTrue();
     }
 }
