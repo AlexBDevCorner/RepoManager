@@ -21,9 +21,14 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
     private readonly IRepositoryFetcher _fetcher;
 
     /// <summary>
-    /// At most 4 simultaneous Git operations across the whole application.
+    /// At most 4 simultaneous Git operations routed through this service.
     /// Never launch one Git process per repository when 100 repositories
     /// are configured.
+    /// Sharing requirement (Tasks 28-31): update orchestration must reuse
+    /// this same semaphore and the per-repository locks below — either by
+    /// living in this service or via a shared singleton coordinator.
+    /// A second, independent semaphore elsewhere would look correct locally
+    /// but would let fetch and update each occupy 4 slots simultaneously.
     /// </summary>
     private readonly SemaphoreSlim _gitConcurrency = new(initialCount: 4);
 
@@ -35,6 +40,10 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
     /// up to <see cref="_gitConcurrency"/>.
     /// Every mutation/network operation acquires its repository's lock.
     /// Local refresh is read-only and stays lock-free.
+    /// This dictionary is the application's single lock registry: do not
+    /// introduce a second per-repository lock collection elsewhere (for
+    /// example inside a future updater) — two registries would not
+    /// mutually exclude, silently defeating Task 27.
     /// </summary>
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _repositoryLocks = new();
 
