@@ -33,5 +33,13 @@ public sealed record RepositoryDashboardItem
     /// </summary>
     public string? FetchError { get; init; }
 
+    /// <summary>
+    /// The last update attempt for this repository, if one was made.
+    /// Null when no update was attempted. Carries the outcome
+    /// (<c>Updated</c> / <c>Skipped</c> / <c>Failed</c>) with its
+    /// human-readable reason.
+    /// </summary>
+    public RepositoryUpdateResult? UpdateResult { get; init; }
+
     public DateTimeOffset? LastSuccessfulFetch { get; init; }
 }

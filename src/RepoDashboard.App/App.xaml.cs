@@ -34,10 +34,10 @@ public partial class App : Application
                 services.AddSingleton<IDivergenceCalculator, DivergenceCalculator>();
                 services.AddSingleton<IRepositoryInspector, RepositoryInspector>();
                 services.AddSingleton<IRepositoryFetcher, RepositoryFetcher>();
+                services.AddSingleton<IRepositoryUpdater, RepositoryUpdater>();
                 services.AddSingleton<IUpdateEligibilityClassifier, UpdateEligibilityClassifier>();
                 services.AddSingleton<IRepositoryDashboardService, RepositoryDashboardService>();
                 services.AddSingleton<IFolderPickerService, FolderPickerService>();
-                // services.AddSingleton<IRepositoryUpdater, RepositoryUpdater>();
 
                 services.AddSingleton<MainWindowViewModel>();
                 services.AddSingleton<MainWindow>();

@@ -95,6 +95,22 @@ public sealed class MainWindowViewModelTests
                 _items.ToList());
         }
 
+        public Task<RepositoryDashboardItem> UpdateAsync(
+            Guid repositoryId,
+            CancellationToken cancellationToken)
+        {
+            ThrowIfStrict();
+            return Task.FromResult(_items.First(i => i.Configuration.Id == repositoryId));
+        }
+
+        public Task<IReadOnlyList<RepositoryDashboardItem>> UpdateAllAsync(
+            CancellationToken cancellationToken)
+        {
+            ThrowIfStrict();
+            return Task.FromResult<IReadOnlyList<RepositoryDashboardItem>>(
+                _items.ToList());
+        }
+
         public Task<RepositoryDashboardItem> AddAsync(
             string path,
             CancellationToken cancellationToken)

@@ -57,4 +57,27 @@ public interface IRepositoryDashboardService
     /// </summary>
     Task<IReadOnlyList<RepositoryDashboardItem>> FetchAllAsync(
         CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Safely updates one repository
+    /// (fetch → inspect → classify → conditional pull → reinspect).
+    /// Only fast-forwardable branches are pulled; anything else becomes
+    /// <c>Skipped</c> with a reason, and a refused pull becomes a safe
+    /// <c>Failed</c> — never a merge, rebase, reset or stash.
+    /// The returned item carries the <c>UpdateResult</c> alongside the
+    /// final snapshot.
+    /// </summary>
+    /// <exception cref="KeyNotFoundException">Unknown repository id.</exception>
+    Task<RepositoryDashboardItem> UpdateAsync(
+        Guid repositoryId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Updates every repository with bounded concurrency (at most 4
+    /// simultaneous Git operations). One repository's failure or skip
+    /// never aborts the batch — every result is collected — except for
+    /// cancellation, which still aborts.
+    /// </summary>
+    Task<IReadOnlyList<RepositoryDashboardItem>> UpdateAllAsync(
+        CancellationToken cancellationToken);
 }

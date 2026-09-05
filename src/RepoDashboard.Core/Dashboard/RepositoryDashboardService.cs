@@ -10,8 +10,12 @@ namespace RepoDashboard.Core.Dashboard;
 /// Combines stored configuration, local inspection and update eligibility
 /// into <see cref="RepositoryDashboardItem"/>s for the UI.
 /// <c>Load</c> / <c>Refresh</c> are local-only and never touch the network;
-/// <c>Fetch</c> runs <c>git fetch --prune</c> and then re-inspects.
-/// The checked-out branch is never mutated here.
+/// <c>Fetch</c> runs <c>git fetch --prune</c> and then re-inspects, and
+/// <c>Update</c> additionally fast-forwards eligible branches.
+/// This service is the application's single orchestration point for all
+/// network/mutation operations: every fetch and update runs under its
+/// shared per-repository locks and global concurrency bound, so concurrent
+/// operations on the same repository always serialize.
 /// </summary>
 public sealed class RepositoryDashboardService : IRepositoryDashboardService, IDisposable
 {
@@ -19,6 +23,7 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
     private readonly IRepositoryInspector _inspector;
     private readonly IUpdateEligibilityClassifier _classifier;
     private readonly IRepositoryFetcher _fetcher;
+    private readonly IRepositoryUpdater _updater;
 
     /// <summary>
     /// At most 4 simultaneous Git operations routed through this service.
@@ -59,16 +64,19 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         IRepositoryConfigurationStore store,
         IRepositoryInspector inspector,
         IUpdateEligibilityClassifier classifier,
-        IRepositoryFetcher fetcher)
+        IRepositoryFetcher fetcher,
+        IRepositoryUpdater updater)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(inspector);
         ArgumentNullException.ThrowIfNull(classifier);
         ArgumentNullException.ThrowIfNull(fetcher);
+        ArgumentNullException.ThrowIfNull(updater);
         _store = store;
         _inspector = inspector;
         _classifier = classifier;
         _fetcher = fetcher;
+        _updater = updater;
     }
 
     public async Task<IReadOnlyList<RepositoryDashboardItem>> LoadAsync(
@@ -210,6 +218,40 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         // for cancellation, which still aborts.
         var tasks = configurations
             .Select(c => FetchRepositoryAsync(c, cancellationToken))
+            .ToList();
+
+        return await Task.WhenAll(tasks);
+    }
+
+    public async Task<RepositoryDashboardItem> UpdateAsync(
+        Guid repositoryId,
+        CancellationToken cancellationToken)
+    {
+        var configurations = await _store.LoadAsync(cancellationToken);
+
+        var configuration = configurations.FirstOrDefault(
+            c => c.Id == repositoryId);
+
+        if (configuration is null)
+        {
+            throw new KeyNotFoundException(
+                $"Repository '{repositoryId}' is not on the dashboard.");
+        }
+
+        return await UpdateRepositoryAsync(configuration, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<RepositoryDashboardItem>> UpdateAllAsync(
+        CancellationToken cancellationToken)
+    {
+        var configurations = await _store.LoadAsync(cancellationToken);
+
+        // Same pattern as FetchAllAsync: start everything at once, let the
+        // shared global semaphore bound Git parallelism to 4, and collect
+        // every per-repository result. Skips and failures never abort
+        // the batch — only cancellation does.
+        var tasks = configurations
+            .Select(c => UpdateRepositoryAsync(c, cancellationToken))
             .ToList();
 
         return await Task.WhenAll(tasks);
@@ -375,6 +417,120 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
             _ => new SemaphoreSlim(1, 1));
 
     /// <summary>
+    /// Updates one repository under the <em>same</em> concurrency guards as
+    /// fetching: the per-repository lock first, the shared global semaphore
+    /// second. This is the single orchestration point the review of Tasks
+    /// 24–27 asked for — fetch and update paths share one lock registry
+    /// and one semaphore, so a fetch can never overlap an update on the
+    /// same repository. The updater itself holds no locks; it runs
+    /// entirely inside this method's guards.
+    /// </summary>
+    private async Task<RepositoryDashboardItem> UpdateRepositoryAsync(
+        RepositoryConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        var repositoryLock = GetLock(configuration.Id);
+
+        await repositoryLock.WaitAsync(cancellationToken);
+
+        try
+        {
+            await _gitConcurrency.WaitAsync(cancellationToken);
+
+            try
+            {
+                return await UpdateAndBuildItemAsync(configuration, cancellationToken);
+            }
+            finally
+            {
+                _gitConcurrency.Release();
+            }
+        }
+        finally
+        {
+            repositoryLock.Release();
+        }
+    }
+
+    private async Task<RepositoryDashboardItem> UpdateAndBuildItemAsync(
+        RepositoryConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        RepositoryUpdateResult updateResult;
+
+        try
+        {
+            updateResult = await _updater.UpdateAsync(configuration, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // A throwing updater (unexpected — the updater maps failures to
+            // Failed results): synthesize the Failed result so the row still
+            // carries the update outcome, then build the row best-effort.
+            var failed = new RepositoryUpdateResult
+            {
+                RepositoryId = configuration.Id,
+                Outcome = RepositoryUpdateOutcome.Failed,
+                Message = $"Could not update '{configuration.Name}': {ex.Message}"
+            };
+
+            return await InspectWithUpdateFailureAsync(
+                configuration,
+                cancellationToken,
+                failed);
+        }
+
+        // An update always starts with a fetch: a successful one refreshes
+        // the last-fetch timestamp exactly like an explicit Fetch does.
+        if (updateResult.FetchResult?.Success == true)
+        {
+            _lastSuccessfulFetch[configuration.Id] = DateTimeOffset.UtcNow;
+        }
+
+        if (updateResult.FinalSnapshot is not null)
+        {
+            // The updater's final re-inspection is the row's snapshot —
+            // never inspected a third time.
+            return CreateItem(configuration, updateResult.FinalSnapshot, updateResult: updateResult);
+        }
+
+        return await InspectWithUpdateFailureAsync(
+            configuration,
+            cancellationToken,
+            updateResult);
+    }
+
+    private async Task<RepositoryDashboardItem> InspectWithUpdateFailureAsync(
+        RepositoryConfiguration configuration,
+        CancellationToken cancellationToken,
+        RepositoryUpdateResult updateResult)
+    {
+        try
+        {
+            var snapshot = await _inspector.InspectAsync(
+                configuration, cancellationToken);
+
+            // The update outcome is preserved on the item even though the
+            // snapshot comes from this fallback inspection.
+            return CreateItem(configuration, snapshot, updateResult: updateResult);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            // The update outcome stays on the item via UpdateResult;
+            // only the inspection error goes here.
+            return CreateFailedItem(configuration, ex.Message, updateResult: updateResult);
+        }
+    }
+
+    /// <summary>
     /// Builds a failed item without running the classifier: the snapshot
     /// carries only identity (id + path) because its Git state is unknown,
     /// and the decision is <c>Unknown</c> with the raw error message.
@@ -382,7 +538,8 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
     private RepositoryDashboardItem CreateFailedItem(
         RepositoryConfiguration configuration,
         string errorMessage,
-        string? fetchError = null) =>
+        string? fetchError = null,
+        RepositoryUpdateResult? updateResult = null) =>
         new()
         {
             Configuration = configuration,
@@ -396,19 +553,22 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
                 UpdateEligibility.Unknown, errorMessage),
             InspectionError = errorMessage,
             FetchError = fetchError,
+            UpdateResult = updateResult,
             LastSuccessfulFetch = GetLastSuccessfulFetch(configuration.Id)
         };
 
     private RepositoryDashboardItem CreateItem(
         RepositoryConfiguration configuration,
         RepositorySnapshot snapshot,
-        string? fetchError = null) =>
+        string? fetchError = null,
+        RepositoryUpdateResult? updateResult = null) =>
         new()
         {
             Configuration = configuration,
             Snapshot = snapshot,
             UpdateDecision = _classifier.Classify(configuration, snapshot),
             FetchError = fetchError,
+            UpdateResult = updateResult,
             LastSuccessfulFetch = GetLastSuccessfulFetch(configuration.Id)
         };
 
