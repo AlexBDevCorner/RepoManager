@@ -166,24 +166,48 @@
             </StackPanel>
         </Border>
 
-        <DataGrid ItemsSource="{Binding Repositories}"
+        <DataGrid x:Name="RepositoriesGrid"
+                   ItemsSource="{Binding Repositories}"
                    SelectedItem="{Binding SelectedRepository, Mode=TwoWay}"
                    AutoGenerateColumns="False"
                    IsReadOnly="True"
                    SelectionMode="Single">
-            <DataGrid.ContextMenu>
-                <ContextMenu DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
-                    <MenuItem Header="Refresh" Command="{Binding RefreshCommand}" />
-                    <MenuItem Header="Fetch" Command="{Binding FetchCommand}" />
-                    <MenuItem Header="Update" Command="{Binding UpdateCommand}" />
-                    <Separator />
-                    <MenuItem Header="Open Folder" Command="{Binding OpenFolderCommand}" />
-                    <MenuItem Header="Open Terminal" Command="{Binding OpenTerminalCommand}" />
-                    <MenuItem Header="Copy Path" Command="{Binding CopyPathCommand}" />
-                    <Separator />
-                    <MenuItem Header="Remove from dashboard" Command="{Binding RemoveCommand}" />
-                </ContextMenu>
-            </DataGrid.ContextMenu>
+            <DataGrid.RowStyle>
+                <!-- Per-repository menu: the row itself travels as the
+                     command parameter, so actions never depend on which
+                     row happens to be selected. -->
+                <Style TargetType="DataGridRow">
+                    <Setter Property="ContextMenu">
+                        <Setter.Value>
+                            <ContextMenu>
+                                <MenuItem Header="Refresh"
+                                          Command="{Binding DataContext.RefreshCommand, Source={x:Reference RepositoriesGrid}}"
+                                          CommandParameter="{Binding}" />
+                                <MenuItem Header="Fetch"
+                                          Command="{Binding DataContext.FetchCommand, Source={x:Reference RepositoriesGrid}}"
+                                          CommandParameter="{Binding}" />
+                                <MenuItem Header="Update"
+                                          Command="{Binding DataContext.UpdateCommand, Source={x:Reference RepositoriesGrid}}"
+                                          CommandParameter="{Binding}" />
+                                <Separator />
+                                <MenuItem Header="Open Folder"
+                                          Command="{Binding DataContext.OpenFolderCommand, Source={x:Reference RepositoriesGrid}}"
+                                          CommandParameter="{Binding}" />
+                                <MenuItem Header="Open Terminal"
+                                          Command="{Binding DataContext.OpenTerminalCommand, Source={x:Reference RepositoriesGrid}}"
+                                          CommandParameter="{Binding}" />
+                                <MenuItem Header="Copy Path"
+                                          Command="{Binding DataContext.CopyPathCommand, Source={x:Reference RepositoriesGrid}}"
+                                          CommandParameter="{Binding}" />
+                                <Separator />
+                                <MenuItem Header="Remove from dashboard"
+                                          Command="{Binding DataContext.RemoveCommand, Source={x:Reference RepositoriesGrid}}"
+                                          CommandParameter="{Binding}" />
+                            </ContextMenu>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </DataGrid.RowStyle>
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Repository"
                                     Binding="{Binding Name}"

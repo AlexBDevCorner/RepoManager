@@ -389,6 +389,70 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
+    public async Task Fetch_marks_successful_row_completed()
+    {
+        var dashboard = new FakeDashboard([Item("Store")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker());
+        await sut.InitializeAsync();
+        sut.SelectedRepository = sut.Repositories[0];
+
+        await sut.FetchCommand.ExecuteAsync(null);
+
+        sut.Repositories[0].Activity.Should().Be(RepositoryActivity.Completed);
+        sut.Repositories[0].ActivityText.Should().Be("Fetched");
+        sut.StatusText.Should().Be("Fetched 'Store'.");
+    }
+
+    [Fact]
+    public async Task Refresh_marks_successful_row_completed()
+    {
+        var dashboard = new FakeDashboard([Item("Store")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker());
+        await sut.InitializeAsync();
+        sut.SelectedRepository = sut.Repositories[0];
+
+        await sut.RefreshCommand.ExecuteAsync(null);
+
+        sut.Repositories[0].Activity.Should().Be(RepositoryActivity.Completed);
+        sut.Repositories[0].ActivityText.Should().Be("Refreshed");
+    }
+
+    [Fact]
+    public async Task Row_command_acts_on_explicit_target_not_selection()
+    {
+        var dashboard = new FakeDashboard([Item("Store"), Item("Legacy")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker());
+        await sut.InitializeAsync();
+        sut.SelectedRepository = sut.Repositories[0];
+        var target = sut.Repositories[1];
+
+        await sut.RefreshCommand.ExecuteAsync(target);
+
+        sut.StatusText.Should().Be("Refreshed 'Legacy'.");
+        target.Activity.Should().Be(RepositoryActivity.Completed);
+        target.ActivityText.Should().Be("Refreshed");
+        // The untouched selection keeps no completed state.
+        sut.Repositories[0].Activity.Should().Be(RepositoryActivity.Idle);
+    }
+
+    [Fact]
+    public void Remove_can_execute_accepts_explicit_target()
+    {
+        var dashboard = new FakeDashboard([Item("Store")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker());
+        var target = new RepositoryRowViewModel(Item("Store"));
+
+        sut.RemoveCommand.CanExecute(null).Should().BeFalse();
+        sut.RemoveCommand.CanExecute(target).Should().BeTrue();
+        sut.RefreshCommand.CanExecute(target).Should().BeFalse(
+            "Git is unavailable until InitializeAsync runs");
+    }
+
+    [Fact]
     public async Task RefreshAll_keeps_failed_row_with_error_and_selection()
     {
         var dashboard = new FakeDashboard([Item("Store"), FailedItem("Broken")]);

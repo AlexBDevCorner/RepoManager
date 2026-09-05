@@ -114,29 +114,34 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private bool CanAdd() => IsGitAvailable && !IsBusy;
 
-    private bool CanRefresh() =>
-        IsGitAvailable && !IsBusy && SelectedRepository is not null;
+    // Single-repository commands accept an explicit target (row context
+    // menu) and fall back to the selection (toolbar): a null parameter
+    // means "use the selection".
+    private bool CanRefresh(RepositoryRowViewModel? target) =>
+        IsGitAvailable && !IsBusy && (target ?? SelectedRepository) is not null;
 
     private bool CanRefreshAll() => IsGitAvailable && !IsBusy;
 
-    private bool CanFetch() =>
-        IsGitAvailable && !IsBusy && SelectedRepository is not null;
+    private bool CanFetch(RepositoryRowViewModel? target) =>
+        IsGitAvailable && !IsBusy && (target ?? SelectedRepository) is not null;
 
     private bool CanFetchAll() => IsGitAvailable && !IsBusy;
 
-    private bool CanUpdate() =>
-        IsGitAvailable && !IsBusy && SelectedRepository is not null;
+    private bool CanUpdate(RepositoryRowViewModel? target) =>
+        IsGitAvailable && !IsBusy && (target ?? SelectedRepository) is not null;
 
     private bool CanUpdateAll() => IsGitAvailable && !IsBusy;
 
     // Filesystem conveniences need no Git, only a selection and no
     // conflicting in-flight operation.
-    private bool CanOpenFolder() => !IsBusy && SelectedRepository is not null;
+    private bool CanOpenFolder(RepositoryRowViewModel? target) =>
+        !IsBusy && (target ?? SelectedRepository) is not null;
 
-    private bool CanOpenTerminal() =>
-        !IsBusy && SelectedRepository is not null && TerminalAvailable.Value;
+    private bool CanOpenTerminal(RepositoryRowViewModel? target) =>
+        !IsBusy && (target ?? SelectedRepository) is not null && TerminalAvailable.Value;
 
-    private bool CanCopyPath() => !IsBusy && SelectedRepository is not null;
+    private bool CanCopyPath(RepositoryRowViewModel? target) =>
+        !IsBusy && (target ?? SelectedRepository) is not null;
 
     /// <summary>
     /// Windows Terminal (<c>wt.exe</c>) on PATH, resolved once. When it is
@@ -173,7 +178,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     }
 
     // Remove edits only repositories.json, so it stays available without Git.
-    private bool CanRemove() => !IsBusy && SelectedRepository is not null;
+    private bool CanRemove(RepositoryRowViewModel? target) =>
+        !IsBusy && (target ?? SelectedRepository) is not null;
 
     /// <summary>
     /// Guards direct invocations (commands bypass <c>CanExecute</c> when
@@ -244,6 +250,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanRefresh))]
     private async Task RefreshAsync(
+        RepositoryRowViewModel? target,
         CancellationToken cancellationToken)
     {
         if (IsBusy)
@@ -256,7 +263,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        var selected = SelectedRepository;
+        var selected = target ?? SelectedRepository;
 
         if (selected is null)
         {
@@ -273,6 +280,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 selected.RepositoryId, cancellationToken);
 
             selected.Update(item);
+            MarkCompletedWhenQuiet(selected, "Refreshed");
             StatusText = $"Refreshed '{selected.Name}'.";
         }
         catch (OperationCanceledException)
@@ -318,7 +326,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var repositories =
                 await _dashboard.RefreshAllAsync(cancellationToken);
 
-            SyncRows(repositories);
+            SyncRows(repositories, "Refreshed");
 
             var failedCount = repositories.Count(
                 r => r.InspectionError is not null);
@@ -351,6 +359,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanFetch))]
     private async Task FetchAsync(
+        RepositoryRowViewModel? target,
         CancellationToken cancellationToken)
     {
         if (IsBusy)
@@ -363,7 +372,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        var selected = SelectedRepository;
+        var selected = target ?? SelectedRepository;
 
         if (selected is null)
         {
@@ -380,6 +389,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 selected.RepositoryId, cancellationToken);
 
             selected.Update(item);
+            MarkCompletedWhenQuiet(selected, "Fetched");
             StatusText = item.FetchError is null
                 ? $"Fetched '{selected.Name}'."
                 : $"Fetch failed for '{selected.Name}': {item.FetchError}";
@@ -427,7 +437,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var repositories =
                 await _dashboard.FetchAllAsync(cancellationToken);
 
-            SyncRows(repositories);
+            SyncRows(repositories, "Fetched");
 
             var failedCount = repositories.Count(
                 r => r.FetchError is not null || r.InspectionError is not null);
@@ -464,6 +474,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanUpdate))]
     private async Task UpdateAsync(
+        RepositoryRowViewModel? target,
         CancellationToken cancellationToken)
     {
         if (IsBusy)
@@ -476,7 +487,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        var selected = SelectedRepository;
+        var selected = target ?? SelectedRepository;
 
         if (selected is null)
         {
@@ -563,9 +574,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// Opens the selected repository folder in Explorer.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanOpenFolder))]
-    private void OpenFolder()
+    private void OpenFolder(RepositoryRowViewModel? target)
     {
-        var selected = SelectedRepository;
+        var selected = target ?? SelectedRepository;
 
         if (selected is null)
         {
@@ -601,9 +612,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// not on PATH.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanOpenTerminal))]
-    private void OpenTerminal()
+    private void OpenTerminal(RepositoryRowViewModel? target)
     {
-        var selected = SelectedRepository;
+        var selected = target ?? SelectedRepository;
 
         if (selected is null)
         {
@@ -632,9 +643,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// Copies the selected repository path to the clipboard.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanCopyPath))]
-    private void CopyPath()
+    private void CopyPath(RepositoryRowViewModel? target)
     {
-        var selected = SelectedRepository;
+        var selected = target ?? SelectedRepository;
 
         if (selected is null)
         {
@@ -714,7 +725,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         foreach (var reason in SkipReasonOrder.Where(skippedByReason.ContainsKey))
         {
-            segments.Add($"{skippedByReason[reason]} {SkipReasonLabel(reason)}");
+            segments.Add($"{skippedByReason[reason]} {UpdateEligibilityLabels.Short(reason)}");
         }
 
         if (failed > 0)
@@ -741,23 +752,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
         UpdateEligibility.CanFastForward,
         UpdateEligibility.Unknown,
     ];
-
-    private static string SkipReasonLabel(UpdateEligibility eligibility) =>
-        eligibility switch
-        {
-            UpdateEligibility.AlreadyUpToDate => "already current",
-            UpdateEligibility.Ahead => "ahead",
-            UpdateEligibility.Dirty => "dirty",
-            UpdateEligibility.Diverged => "diverged",
-            UpdateEligibility.NoUpstream => "no upstream",
-            UpdateEligibility.UpstreamUsesDifferentRemote => "different remote",
-            UpdateEligibility.DetachedHead => "detached",
-            UpdateEligibility.OperationInProgress => "busy",
-            UpdateEligibility.RepositoryMissing => "missing",
-            UpdateEligibility.InvalidRepository => "invalid",
-            UpdateEligibility.CanFastForward => "can fast-forward",
-            _ => "unknown",
-        };
 
     private static string DescribeUpdateOutcome(
         string name, RepositoryDashboardItem item)
@@ -833,9 +827,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     [RelayCommand(CanExecute = nameof(CanRemove))]
     private async Task RemoveAsync(
+        RepositoryRowViewModel? target,
         CancellationToken cancellationToken)
     {
-        var selected = SelectedRepository;
+        var selected = target ?? SelectedRepository;
 
         if (selected is null)
         {
@@ -884,8 +879,38 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Recalculates time-derived text on every row without touching Git or
+    /// operation state. Invoked periodically from the view so fetch age and
+    /// the stale indicator evolve while the application sits open.
+    /// </summary>
+    public void RefreshTimeDisplays()
+    {
+        foreach (var row in Repositories)
+        {
+            row.RefreshTimeDisplay();
+        }
+    }
+
+    /// <summary>
+    /// After a successful fetch/refresh the item carries no failure or
+    /// update outcome, so <see cref="RepositoryRowViewModel.Update"/>
+    /// leaves the row <c>Idle</c>: record the explicit completed state
+    /// here instead of leaving a blank Activity cell. Rows reporting a
+    /// failure keep their terminal state.
+    /// </summary>
+    private static void MarkCompletedWhenQuiet(
+        RepositoryRowViewModel row, string completedText)
+    {
+        if (row.Activity == RepositoryActivity.Idle)
+        {
+            row.SetActivity(RepositoryActivity.Completed, completedText);
+        }
+    }
+
     private void SyncRows(
-        IReadOnlyList<RepositoryDashboardItem> repositories)
+        IReadOnlyList<RepositoryDashboardItem> repositories,
+        string? batchCompletedText = null)
     {
         var fresh = repositories.ToDictionary(
             r => r.Configuration.Id);
@@ -903,13 +928,22 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var existing = Repositories.FirstOrDefault(
                 r => r.RepositoryId == item.Configuration.Id);
 
+            RepositoryRowViewModel row;
+
             if (existing is null)
             {
-                Repositories.Add(new RepositoryRowViewModel(item));
+                row = new RepositoryRowViewModel(item);
+                Repositories.Add(row);
             }
             else
             {
                 existing.Update(item);
+                row = existing;
+            }
+
+            if (batchCompletedText is not null)
+            {
+                MarkCompletedWhenQuiet(row, batchCompletedText);
             }
         }
     }

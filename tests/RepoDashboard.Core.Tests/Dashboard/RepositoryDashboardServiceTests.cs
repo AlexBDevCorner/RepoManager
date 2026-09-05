@@ -1173,6 +1173,78 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task FetchAsync_Success_ReportsFetchOperation()
+    {
+        var configuration = Config("Store");
+        var sut = CreateSut(
+            new InMemoryStore([configuration]),
+            new StubInspector(UpToDateSnapshot));
+
+        var item = await sut.FetchAsync(configuration.Id, CancellationToken.None);
+
+        item.LastOperation.Should().Be(RepositoryOperationType.Fetch);
+        item.FetchError.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task RefreshAsync_ReportsRefreshOperation()
+    {
+        var configuration = Config("Store");
+        var sut = CreateSut(
+            new InMemoryStore([configuration]),
+            new StubInspector(UpToDateSnapshot));
+
+        var item = await sut.RefreshAsync(configuration.Id, CancellationToken.None);
+
+        item.LastOperation.Should().Be(RepositoryOperationType.Refresh);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_Success_ReportsUpdateOperation()
+    {
+        var configuration = Config("Store");
+        var sut = CreateSut(
+            new InMemoryStore([configuration]),
+            new StubInspector(UpToDateSnapshot),
+            updater: new StubUpdater(c => new RepositoryUpdateResult
+            {
+                RepositoryId = c.Id,
+                Outcome = RepositoryUpdateOutcome.Updated,
+                Message = "Fast-forwarded 'main'.",
+                FetchResult = SuccessfulFetch(),
+                FinalSnapshot = UpToDateSnapshot(c)
+            }));
+
+        var item = await sut.UpdateAsync(configuration.Id, CancellationToken.None);
+
+        item.LastOperation.Should().Be(RepositoryOperationType.Update);
+        item.UpdateResult!.Outcome.Should().Be(RepositoryUpdateOutcome.Updated);
+    }
+
+    [Fact]
+    public async Task LoadAsync_ClaimsNoOperationDespitePersistedTimestamp()
+    {
+        var configuration = Config("Store");
+        var state = new StubStateStore
+        {
+            ToLoad = new Dictionary<Guid, DateTimeOffset>
+            {
+                [configuration.Id] = DateTimeOffset.UtcNow.AddDays(-2)
+            }
+        };
+        var sut = CreateSutWithState(
+            new InMemoryStore([configuration]),
+            new StubInspector(UpToDateSnapshot),
+            state);
+
+        var items = await sut.LoadAsync(CancellationToken.None);
+
+        items.Should().ContainSingle();
+        items[0].LastOperation.Should().BeNull();
+        items[0].LastSuccessfulFetch.Should().NotBeNull();
+    }
+
+    [Fact]
     public async Task RemoveAsync_ForgetsPersistedTimestamp()
     {
         var configuration = Config("Store");

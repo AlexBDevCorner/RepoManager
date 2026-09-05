@@ -118,7 +118,9 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
                 $"Repository '{repositoryId}' is not on the dashboard.");
         }
 
-        return await InspectAsync(configuration, cancellationToken);
+        return await InspectAsync(
+            configuration, cancellationToken,
+            RepositoryOperationType.Refresh);
     }
 
     public async Task<IReadOnlyList<RepositoryDashboardItem>> RefreshAllAsync(
@@ -127,7 +129,9 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         await EnsureStateLoadedAsync(cancellationToken);
         var configurations = await _store.LoadAsync(cancellationToken);
 
-        return await InspectAllAsync(configurations, cancellationToken);
+        return await InspectAllAsync(
+            configurations, cancellationToken,
+            RepositoryOperationType.Refresh);
     }
 
     public async Task<RepositoryDashboardItem> AddAsync(
@@ -288,7 +292,8 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
     /// </summary>
     private async Task<IReadOnlyList<RepositoryDashboardItem>> InspectAllAsync(
         IReadOnlyList<RepositoryConfiguration> configurations,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RepositoryOperationType? operation = null)
     {
         var items = new List<RepositoryDashboardItem>(configurations.Count);
 
@@ -296,7 +301,7 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         {
             try
             {
-                items.Add(await InspectAsync(configuration, cancellationToken));
+                items.Add(await InspectAsync(configuration, cancellationToken, operation));
             }
             catch (OperationCanceledException)
             {
@@ -304,7 +309,7 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
             }
             catch (Exception ex)
             {
-                items.Add(CreateFailedItem(configuration, ex.Message));
+                items.Add(CreateFailedItem(configuration, ex.Message, operation: operation));
             }
         }
 
@@ -313,12 +318,13 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
 
     private async Task<RepositoryDashboardItem> InspectAsync(
         RepositoryConfiguration configuration,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        RepositoryOperationType? operation = null)
     {
         var snapshot = await _inspector.InspectAsync(
             configuration, cancellationToken);
 
-        return CreateItem(configuration, snapshot);
+        return CreateItem(configuration, snapshot, operation: operation);
     }
 
     /// <summary>
@@ -398,7 +404,9 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
 
         try
         {
-            return await InspectAsync(configuration, cancellationToken);
+            return await InspectAsync(
+                configuration, cancellationToken,
+                RepositoryOperationType.Fetch);
         }
         catch (OperationCanceledException)
         {
@@ -408,7 +416,9 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         {
             // The fetch succeeded (timestamp already recorded) but the
             // re-inspection failed: keep the row visible as a failed item.
-            return CreateFailedItem(configuration, ex.Message);
+            return CreateFailedItem(
+                configuration, ex.Message,
+                operation: RepositoryOperationType.Fetch);
         }
     }
 
@@ -422,7 +432,9 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
             var snapshot = await _inspector.InspectAsync(
                 configuration, cancellationToken);
 
-            return CreateItem(configuration, snapshot, fetchError);
+            return CreateItem(
+                configuration, snapshot, fetchError,
+                operation: RepositoryOperationType.Fetch);
         }
         catch (OperationCanceledException)
         {
@@ -430,7 +442,9 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         }
         catch (Exception ex)
         {
-            return CreateFailedItem(configuration, ex.Message, fetchError);
+            return CreateFailedItem(
+                configuration, ex.Message, fetchError,
+                operation: RepositoryOperationType.Fetch);
         }
     }
 
@@ -518,7 +532,10 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         {
             // The updater's final re-inspection is the row's snapshot —
             // never inspected a third time.
-            return CreateItem(configuration, updateResult.FinalSnapshot, updateResult: updateResult);
+            return CreateItem(
+                configuration, updateResult.FinalSnapshot,
+                updateResult: updateResult,
+                operation: RepositoryOperationType.Update);
         }
 
         return await InspectWithUpdateFailureAsync(
@@ -539,7 +556,10 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
 
             // The update outcome is preserved on the item even though the
             // snapshot comes from this fallback inspection.
-            return CreateItem(configuration, snapshot, updateResult: updateResult);
+            return CreateItem(
+                configuration, snapshot,
+                updateResult: updateResult,
+                operation: RepositoryOperationType.Update);
         }
         catch (OperationCanceledException)
         {
@@ -549,7 +569,10 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         {
             // The update outcome stays on the item via UpdateResult;
             // only the inspection error goes here.
-            return CreateFailedItem(configuration, ex.Message, updateResult: updateResult);
+            return CreateFailedItem(
+                configuration, ex.Message,
+                updateResult: updateResult,
+                operation: RepositoryOperationType.Update);
         }
     }
 
@@ -562,7 +585,8 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         RepositoryConfiguration configuration,
         string errorMessage,
         string? fetchError = null,
-        RepositoryUpdateResult? updateResult = null) =>
+        RepositoryUpdateResult? updateResult = null,
+        RepositoryOperationType? operation = null) =>
         new()
         {
             Configuration = configuration,
@@ -577,6 +601,7 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
             InspectionError = errorMessage,
             FetchError = fetchError,
             UpdateResult = updateResult,
+            LastOperation = operation,
             LastSuccessfulFetch = GetLastSuccessfulFetch(configuration.Id)
         };
 
@@ -584,7 +609,8 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         RepositoryConfiguration configuration,
         RepositorySnapshot snapshot,
         string? fetchError = null,
-        RepositoryUpdateResult? updateResult = null) =>
+        RepositoryUpdateResult? updateResult = null,
+        RepositoryOperationType? operation = null) =>
         new()
         {
             Configuration = configuration,
@@ -592,6 +618,7 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
             UpdateDecision = _classifier.Classify(configuration, snapshot),
             FetchError = fetchError,
             UpdateResult = updateResult,
+            LastOperation = operation,
             LastSuccessfulFetch = GetLastSuccessfulFetch(configuration.Id)
         };
 

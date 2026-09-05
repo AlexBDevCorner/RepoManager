@@ -1,3 +1,4 @@
+using System;
 using CommunityToolkit.Mvvm.ComponentModel;
 using RepoDashboard.Core.Dashboard;
 using RepoDashboard.Core.Models;
@@ -87,7 +88,15 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
     /// </summary>
     public static TimeSpan StaleAfter { get; } = TimeSpan.FromHours(24);
 
+    /// <summary>
+    /// Clock for time-derived display text. Defaults to the system clock;
+    /// tests substitute a fake to cross the staleness boundary.
+    /// </summary>
+    public TimeProvider TimeProvider { get; set; } = TimeProvider.System;
+
     public Guid RepositoryId { get; private set; }
+
+    private RepositoryDashboardItem? _lastItem;
 
     public RepositoryRowViewModel(RepositoryDashboardItem item)
     {
@@ -102,6 +111,7 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
     {
         ArgumentNullException.ThrowIfNull(item);
 
+        _lastItem = item;
         RepositoryId = item.Configuration.Id;
         Name = item.Configuration.Name;
 
@@ -144,9 +154,31 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Recalculates only time-derived display text (relative fetch age and
+    /// the stale indicator) from the last item. Never touches
+    /// <see cref="Activity"/>: an in-progress operation keeps its transient
+    /// state. Called periodically so staleness evolves while the app sits
+    /// open, not just when Git runs.
+    /// </summary>
+    public void RefreshTimeDisplay()
+    {
+        if (_lastItem is null)
+        {
+            return;
+        }
+
+        LastFetchText = FormatLastFetch(_lastItem.LastSuccessfulFetch);
+        DetailsLastFetch = _lastItem.LastSuccessfulFetch?.ToLocalTime().ToString("g") ?? "Never";
+        MapStaleness(_lastItem.LastSuccessfulFetch);
+    }
+
+    /// <summary>
     /// Derives the terminal inline activity from the fresh dashboard item:
     /// update outcomes win over fetch errors, fetch errors win over idle.
-    /// A plain refresh/load carries neither, so the row returns to idle.
+    /// A plain load carries neither, so the row returns to idle; callers
+    /// reporting a successful fetch/refresh apply their explicit
+    /// <c>Completed</c> state afterwards. Text stays compact — full reasons
+    /// live in the details area.
     /// </summary>
     private void MapTerminalActivity(RepositoryDashboardItem item)
     {
@@ -160,15 +192,13 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
                     return;
                 case RepositoryUpdateOutcome.Skipped:
                     Activity = RepositoryActivity.Skipped;
-                    ActivityText = string.IsNullOrWhiteSpace(item.UpdateResult.Message)
-                        ? "Skipped"
-                        : $"Skipped — {item.UpdateResult.Message}";
+                    var reason = item.UpdateResult.Decision?.Eligibility
+                        ?? item.UpdateDecision.Eligibility;
+                    ActivityText = $"Skipped — {UpdateEligibilityLabels.Short(reason)}";
                     return;
                 default:
                     Activity = RepositoryActivity.Failed;
-                    ActivityText = string.IsNullOrWhiteSpace(item.UpdateResult.Message)
-                        ? "Update failed"
-                        : $"Update failed — {item.UpdateResult.Message}";
+                    ActivityText = "Update failed";
                     return;
             }
         }
@@ -176,14 +206,14 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
         if (item.FetchError is not null)
         {
             Activity = RepositoryActivity.Failed;
-            ActivityText = $"Fetch failed — {item.FetchError}";
+            ActivityText = "Fetch failed";
             return;
         }
 
         if (item.InspectionError is not null)
         {
             Activity = RepositoryActivity.Failed;
-            ActivityText = $"Failed — {item.InspectionError}";
+            ActivityText = "Failed";
             return;
         }
 
@@ -254,31 +284,38 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
         return $"{divergence.Ahead} ahead / {divergence.Behind} behind";
     }
 
+    /// <summary>
+    /// Reports last operation from explicit operation identity, never by
+    /// inferring it from a persisted timestamp: a historical
+    /// <c>LastSuccessfulFetch</c> on a loaded or refreshed row must not
+    /// read as "Fetch successful".
+    /// </summary>
     private static string DescribeLastOperation(RepositoryDashboardItem item)
     {
-        if (item.UpdateResult is not null)
+        switch (item.LastOperation)
         {
-            return item.UpdateResult.Outcome switch
-            {
-                RepositoryUpdateOutcome.Updated => "Update successful",
-                RepositoryUpdateOutcome.Skipped => "Update skipped",
-                _ => "Update failed"
-            };
+            case RepositoryOperationType.Update when item.UpdateResult is not null:
+                return item.UpdateResult.Outcome switch
+                {
+                    RepositoryUpdateOutcome.Updated => "Update successful",
+                    RepositoryUpdateOutcome.Skipped => "Update skipped",
+                    _ => "Update failed"
+                };
+            case RepositoryOperationType.Update:
+                return "Update failed";
+            case RepositoryOperationType.Fetch when item.FetchError is not null:
+                return "Fetch failed";
+            case RepositoryOperationType.Fetch when item.InspectionError is not null:
+                return "Inspection failed";
+            case RepositoryOperationType.Fetch:
+                return "Fetch successful";
+            case RepositoryOperationType.Refresh when item.InspectionError is not null:
+                return "Inspection failed";
+            case RepositoryOperationType.Refresh:
+                return "Refreshed";
+            default:
+                return "—";
         }
-
-        if (item.FetchError is not null)
-        {
-            return "Fetch failed";
-        }
-
-        if (item.InspectionError is not null)
-        {
-            return "Inspection failed";
-        }
-
-        return item.LastSuccessfulFetch is not null
-            ? "Fetch successful"
-            : "—";
     }
 
     /// <summary>
@@ -294,7 +331,7 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
             return;
         }
 
-        var age = DateTimeOffset.UtcNow - lastFetch.Value.ToUniversalTime();
+        var age = TimeProvider.GetUtcNow() - lastFetch.Value.ToUniversalTime();
 
         if (age > StaleAfter)
         {
@@ -368,14 +405,14 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
         return $"{snapshot.DefaultRemoteBranch} {FormatDivergence(snapshot.DefaultBranchDivergence)}";
     }
 
-    private static string FormatLastFetch(DateTimeOffset? lastFetch)
+    private string FormatLastFetch(DateTimeOffset? lastFetch)
     {
         if (lastFetch is null)
         {
             return "Never";
         }
 
-        var age = DateTimeOffset.UtcNow - lastFetch.Value.ToUniversalTime();
+        var age = TimeProvider.GetUtcNow() - lastFetch.Value.ToUniversalTime();
 
         if (age < TimeSpan.FromMinutes(1))
         {
