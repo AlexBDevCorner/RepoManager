@@ -252,4 +252,5 @@ public sealed class RepositoryBatchCancellationTests
         batch.WasCancelled.Should().BeFalse();
         batch.CompletedItems.Should().HaveCount(2);
     }
+
 }

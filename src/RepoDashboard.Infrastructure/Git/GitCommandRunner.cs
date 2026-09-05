@@ -83,12 +83,14 @@ public sealed class GitCommandRunner : IGitCommandRunner
             stopwatch.Stop();
 
             // Debug only: success is routine, failures are warned by callers
-            // (fetcher/updater) with repository context. Only the Git verbs
-            // are logged — never the working directory (may contain user
-            // names) and never stdout/stderr (may embed credentials).
+            // (fetcher/updater) with repository context. Only the Git verb
+            // is logged — never the full argument list (a remote argument
+            // can be a credential-bearing URL), never the working directory
+            // (may contain user names) and never stdout/stderr.
+            var command = arguments.Count > 0 ? arguments[0] : "<none>";
             _logger.LogDebug(
-                "git {Arguments} exited {ExitCode} in {DurationMs} ms",
-                string.Join(' ', arguments),
+                "git {Command} exited {ExitCode} in {DurationMs} ms",
+                command,
                 process.ExitCode, stopwatch.Elapsed.TotalMilliseconds);
 
             return new GitCommandResult

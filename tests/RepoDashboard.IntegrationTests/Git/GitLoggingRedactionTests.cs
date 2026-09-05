@@ -130,6 +130,75 @@ public sealed class GitLoggingRedactionTests
     }
 
     [Fact]
+    public async Task Fetcher_never_logs_preferred_remote_value()
+    {
+        // PreferredRemote is unconstrained config: it can hold a
+        // credential-bearing URL, and is passed to Git as an argument.
+        // It must never reach application logs (Information or Debug).
+        // Use a real temp git repo so the runner actually starts and logs.
+        var workDir = Path.Combine(
+            Path.GetTempPath(), "RepoDashboard.Tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workDir);
+
+        try
+        {
+            var bootstrap = new GitCommandRunner();
+            var init = await bootstrap.ExecuteAsync(workDir, ["init"]);
+            init.Success.Should().BeTrue();
+
+            var runnerLogger = new CapturingLogger<GitCommandRunner>();
+            var fetchLogger = new CapturingLogger<RepositoryFetcher>();
+            var runner = new GitCommandRunner(runnerLogger);
+            IRepositoryFetcher sut = new RepositoryFetcher(runner, fetchLogger);
+
+            var config = Config() with
+            {
+                Path = workDir,
+                PreferredRemote = "https://user:super-secret@example.invalid/repo.git"
+            };
+
+            await sut.FetchAsync(config, CancellationToken.None);
+
+            var allEvents = fetchLogger.Events.Concat(runnerLogger.Events).ToList();
+            allEvents.Should().NotBeEmpty();
+            allEvents.Should().OnlyContain(e => !e.Contains("super-secret"));
+        }
+        finally
+        {
+            TestDirectories.DeleteRecursively(workDir);
+        }
+    }
+
+    [Fact]
+    public async Task Runner_logs_only_verb_never_full_arguments()
+    {
+        var logger = new CapturingLogger<GitCommandRunner>();
+        var runner = new GitCommandRunner(logger);
+        var markerDir = Path.Combine(
+            Path.GetTempPath(), "RepoDashboard.Tests",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(markerDir);
+
+        try
+        {
+            // Secret smuggled as a non-verb argument: fast local failure,
+            // no network. Only "rev-parse" may be logged.
+            await runner.ExecuteAsync(
+                markerDir,
+                ["rev-parse", "--verify", "https://user:super-secret@example.invalid/ref"]);
+        }
+        finally
+        {
+            TestDirectories.DeleteRecursively(markerDir);
+        }
+
+        logger.Events.Should().NotBeEmpty();
+        logger.Events.Should().OnlyContain(e => !e.Contains("super-secret"));
+        logger.Events.Should().Contain(e => e.Contains("rev-parse"));
+    }
+
+    [Fact]
     public void Sanitizer_redacts_uri_user_info()
     {
         GitLogSanitizer.Sanitize(

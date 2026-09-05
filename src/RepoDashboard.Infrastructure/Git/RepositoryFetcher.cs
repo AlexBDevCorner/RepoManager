@@ -45,9 +45,13 @@ public sealed class RepositoryFetcher : IRepositoryFetcher
             ? "origin"
             : repository.PreferredRemote.Trim();
 
+        // Never log the remote value: PreferredRemote is an unconstrained
+        // string and can hold a credential-bearing URL. The remote is still
+        // passed to Git as an argument (that is its function); it just never
+        // reaches application logs.
         _logger.LogInformation(
-            "Fetching repository {Repository} (remote {Remote})",
-            repository.Name, remote);
+            "Fetching repository {Repository}",
+            repository.Name);
 
         var stopwatch = Stopwatch.StartNew();
 

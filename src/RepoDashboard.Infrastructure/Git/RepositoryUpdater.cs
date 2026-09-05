@@ -238,9 +238,15 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
         }
 
         // Step 6 — Reinspect. Expected final: Ahead 0, Behind 0 vs upstream.
+        // The pull above already mutated the working tree, so this local
+        // post-mutation sync must not honor user cancellation: cancelling
+        // here would discard a completed update and leave the UI showing
+        // stale (pre-pull) state while the filesystem is already updated.
+        // CancellationToken.None is intentional — inspection is fast and
+        // local, and a committed mutation must always be reported.
         try
         {
-            var final = await _inspector.InspectAsync(repository, cancellationToken);
+            var final = await _inspector.InspectAsync(repository, CancellationToken.None);
 
             stopwatch.Stop();
             _logger.LogInformation(
@@ -257,14 +263,11 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
                 FinalSnapshot = final
             };
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
         catch (Exception ex)
         {
-            // The pull succeeded — reporting failure would lie. The caller
-            // re-inspects when FinalSnapshot is null.
+            // The pull succeeded — reporting failure (or honouring a
+            // concurrent cancel) would lie. The caller re-inspects when
+            // FinalSnapshot is null.
             stopwatch.Stop();
             _logger.LogInformation(
                 "Update completed for {Repository} in {DurationSec:F2} sec "

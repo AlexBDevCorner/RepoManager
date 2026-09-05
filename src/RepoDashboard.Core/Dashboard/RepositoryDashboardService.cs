@@ -538,7 +538,11 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
                 configuration, fetchResult.Message, cancellationToken);
         }
 
-        await RecordFetchSuccessAsync(configuration.Id, cancellationToken);
+        // Advisory timestamp persistence must not honor user cancellation:
+        // the fetch already succeeded, and losing the completed item over a
+        // state-file write would hide completed work. CancellationToken.None
+        // is intentional — the in-memory timestamp is recorded regardless.
+        await RecordFetchSuccessAsync(configuration.Id, CancellationToken.None);
 
         try
         {
@@ -661,9 +665,11 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
 
         // An update always starts with a fetch: a successful one refreshes
         // the last-fetch timestamp exactly like an explicit Fetch does.
+        // Advisory only — never let its cancellation discard an already
+        // completed Git operation (see FetchAndInspectAsync above).
         if (updateResult.FetchResult?.Success == true)
         {
-            await RecordFetchSuccessAsync(configuration.Id, cancellationToken);
+            await RecordFetchSuccessAsync(configuration.Id, CancellationToken.None);
         }
 
         if (updateResult.FinalSnapshot is not null)
