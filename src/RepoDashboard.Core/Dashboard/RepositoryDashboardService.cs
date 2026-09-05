@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoDashboard.Core.Git;
+using RepoDashboard.Core.Lifetime;
 using RepoDashboard.Core.Models;
 using RepoDashboard.Core.Repositories;
 using RepoDashboard.Core.State;
@@ -83,7 +84,8 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         IRepositoryFetcher fetcher,
         IRepositoryUpdater updater,
         IOperationStateStore? operationStateStore = null,
-        ILogger<RepositoryDashboardService>? logger = null)
+        ILogger<RepositoryDashboardService>? logger = null,
+        IApplicationShutdown? applicationShutdown = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(inspector);
@@ -97,7 +99,20 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         _updater = updater;
         _stateStore = operationStateStore;
         _logger = logger ?? NullLogger<RepositoryDashboardService>.Instance;
+        _shutdownToken = applicationShutdown?.ShutdownToken ?? CancellationToken.None;
     }
+
+    /// <summary>
+    /// Shutdown-only token for post-commit work. When no lifetime is wired
+    /// (unit tests) this is <see cref="CancellationToken.None"/>, preserving
+    /// the previous "ignore user Cancel" behaviour; with a lifetime wired it
+    /// ignores user Cancel yet still aborts on application shutdown.
+    /// </summary>
+    private readonly CancellationToken _shutdownToken;
+
+    private CancellationToken PostCommitToken => _shutdownToken.CanBeCanceled
+        ? _shutdownToken
+        : CancellationToken.None;
 
     public async Task<IReadOnlyList<RepositoryDashboardItem>> LoadAsync(
         CancellationToken cancellationToken)
@@ -682,9 +697,20 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
                 operation: RepositoryOperationType.Update);
         }
 
+        // The updater committed (Updated) but its final re-inspection failed
+        // (FinalSnapshot null): the fallback must use the same post-commit
+        // shutdown-only token. Using the original (user-cancellable) token
+        // here would let a Cancel pressed after the pull erase the committed
+        // Updated outcome. Shutdown still aborts via the shutdown token.
+        // Non-Updated outcomes stay on the original token: user Cancel and
+        // shutdown both abort them as before.
+        var fallbackToken = updateResult.Outcome == RepositoryUpdateOutcome.Updated
+            ? PostCommitToken
+            : cancellationToken;
+
         return await InspectWithUpdateFailureAsync(
             configuration,
-            cancellationToken,
+            fallbackToken,
             updateResult);
     }
 
@@ -699,7 +725,9 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
                 configuration, cancellationToken);
 
             // The update outcome is preserved on the item even though the
-            // snapshot comes from this fallback inspection.
+            // snapshot comes from this fallback inspection — including
+            // Updated with a fresh snapshot when the updater's own final
+            // re-inspection failed.
             return CreateItem(
                 configuration, snapshot,
                 updateResult: updateResult,
@@ -707,11 +735,16 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         }
         catch (OperationCanceledException)
         {
+            // Cancellation (user Cancel pre-commit, or shutdown at any time)
+            // still aborts: the guarded batch converts this into a cancelled
+            // marker. For Updated this can only be shutdown, because the
+            // fallback token ignores user Cancel.
             throw;
         }
         catch (Exception ex)
         {
-            // The update outcome stays on the item via UpdateResult;
+            // The update outcome stays on the item via UpdateResult (so an
+            // Updated outcome survives a failed fallback inspection);
             // only the inspection error goes here.
             return CreateFailedItem(
                 configuration, ex.Message,

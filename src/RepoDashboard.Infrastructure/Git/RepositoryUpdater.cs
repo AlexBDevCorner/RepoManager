@@ -2,6 +2,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoDashboard.Core.Git;
+using RepoDashboard.Core.Lifetime;
 using RepoDashboard.Core.Models;
 using RepoDashboard.Core.Sync;
 
@@ -25,13 +26,15 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
     private readonly IRepositoryInspector _inspector;
     private readonly IUpdateEligibilityClassifier _classifier;
     private readonly ILogger<RepositoryUpdater> _logger;
+    private readonly CancellationToken _shutdownToken;
 
     public RepositoryUpdater(
         IGitCommandRunner runner,
         IRepositoryFetcher fetcher,
         IRepositoryInspector inspector,
         IUpdateEligibilityClassifier classifier,
-        ILogger<RepositoryUpdater>? logger = null)
+        ILogger<RepositoryUpdater>? logger = null,
+        IApplicationShutdown? applicationShutdown = null)
     {
         ArgumentNullException.ThrowIfNull(runner);
         ArgumentNullException.ThrowIfNull(fetcher);
@@ -42,6 +45,7 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
         _inspector = inspector;
         _classifier = classifier;
         _logger = logger ?? NullLogger<RepositoryUpdater>.Instance;
+        _shutdownToken = applicationShutdown?.ShutdownToken ?? CancellationToken.None;
     }
 
     public async Task<RepositoryUpdateResult> UpdateAsync(
@@ -239,14 +243,20 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
 
         // Step 6 — Reinspect. Expected final: Ahead 0, Behind 0 vs upstream.
         // The pull above already mutated the working tree, so this local
-        // post-mutation sync must not honor user cancellation: cancelling
-        // here would discard a completed update and leave the UI showing
-        // stale (pre-pull) state while the filesystem is already updated.
-        // CancellationToken.None is intentional — inspection is fast and
-        // local, and a committed mutation must always be reported.
+        // post-mutation sync must ignore user cancellation but still honor
+        // application shutdown: cancelling here via the Cancel button would
+        // discard a committed update and leave the UI showing stale
+        // (pre-pull) state while the filesystem is already updated, whereas
+        // shutdown must still kill the inspection's Git processes (Task 44).
+        // Post-commit token is therefore shutdown-only (or None when no
+        // lifetime is wired, e.g. unit tests). GitCommandRunner additionally
+        // observes shutdown for every process as defense-in-depth.
+        var postCommitToken = _shutdownToken.CanBeCanceled
+            ? _shutdownToken
+            : CancellationToken.None;
         try
         {
-            var final = await _inspector.InspectAsync(repository, CancellationToken.None);
+            var final = await _inspector.InspectAsync(repository, postCommitToken);
 
             stopwatch.Stop();
             _logger.LogInformation(
@@ -263,11 +273,20 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
                 FinalSnapshot = final
             };
         }
+        catch (OperationCanceledException)
+        {
+            // Only shutdown can cancel the post-commit token (user Cancel is
+            // not observed here). Propagate so shutdown drains promptly and
+            // Task 44's kill guarantee applies; never convert shutdown into
+            // a fabricated Updated result.
+            throw;
+        }
         catch (Exception ex)
         {
-            // The pull succeeded — reporting failure (or honouring a
-            // concurrent cancel) would lie. The caller re-inspects when
-            // FinalSnapshot is null.
+            // The pull succeeded — reporting failure would lie. The caller
+            // re-inspects when FinalSnapshot is null (with the same
+            // shutdown-only token, so user Cancel still cannot erase the
+            // committed Updated outcome).
             stopwatch.Stop();
             _logger.LogInformation(
                 "Update completed for {Repository} in {DurationSec:F2} sec "

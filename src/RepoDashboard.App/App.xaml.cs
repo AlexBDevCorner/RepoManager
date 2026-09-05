@@ -7,6 +7,7 @@ using RepoDashboard.App.ViewModels;
 using RepoDashboard.Core.Dashboard;
 using RepoDashboard.Core.Discovery;
 using RepoDashboard.Core.Git;
+using RepoDashboard.Core.Lifetime;
 using RepoDashboard.Core.Repositories;
 using RepoDashboard.Core.State;
 using RepoDashboard.Core.Sync;
@@ -40,6 +41,9 @@ public partial class App : Application
             {
                 // Git and application services (Tasks 3+) are registered here
                 // as they are implemented, e.g.:
+                // Shared shutdown signal: user Cancel vs shutdown stay
+                // distinct downstream — post-commit work observes only this.
+                services.AddSingleton<IApplicationShutdown, ApplicationShutdown>();
                 services.AddSingleton<IGitCommandRunner, GitCommandRunner>();
                 services.AddSingleton<IGitEnvironment, GitEnvironment>();
                 services.AddSingleton<IRepositoryConfigurationStore, JsonRepositoryConfigurationStore>();

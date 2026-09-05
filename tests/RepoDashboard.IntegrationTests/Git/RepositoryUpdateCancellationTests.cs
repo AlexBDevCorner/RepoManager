@@ -1,6 +1,7 @@
 using FluentAssertions;
 using RepoDashboard.Core.Dashboard;
 using RepoDashboard.Core.Git;
+using RepoDashboard.Core.Lifetime;
 using RepoDashboard.Core.Models;
 using RepoDashboard.Core.Repositories;
 using RepoDashboard.Core.Sync;
@@ -12,7 +13,8 @@ namespace RepoDashboard.IntegrationTests.Git;
 /// Regression test (review): once git pull has succeeded, the working tree
 /// is already mutated, so a Cancel arriving during the final local
 /// re-inspection must not hide the completed update. The post-pull sync
-/// ignores user cancellation and the batch still contains Updated.
+/// ignores user cancellation but still honors application shutdown, and the
+/// batch still contains Updated.
 /// </summary>
 public sealed class RepositoryUpdateCancellationTests
 {
@@ -75,6 +77,8 @@ public sealed class RepositoryUpdateCancellationTests
 
         public int Calls => _calls;
 
+        public CancellationToken LastToken { get; private set; }
+
         public void Release() => _gate.TrySetResult();
 
         public async Task<RepositorySnapshot> InspectAsync(
@@ -93,11 +97,68 @@ public sealed class RepositoryUpdateCancellationTests
             }
 
             // Post-pull final inspection: block until the test releases.
-            // Receives CancellationToken.None after the fix, so a user
-            // Cancel does not abort it; before the fix it observed the
-            // caller's token and threw OperationCanceledException.
+            // Receives the shutdown-only token after the fix, so a user
+            // Cancel does not abort it but shutdown does; before the
+            // shutdown/user split it received CancellationToken.None and
+            // ignored both.
+            LastToken = cancellationToken;
             await _gate.Task.WaitAsync(cancellationToken);
             return Snapshot(repository);
+        }
+    }
+
+    private sealed class FailFirstFinalUpdater : IRepositoryUpdater
+    {
+        private readonly CancellationTokenSource _userCts;
+        private readonly RepositoryConfiguration _config;
+
+        public FailFirstFinalUpdater(
+            RepositoryConfiguration config,
+            CancellationTokenSource userCts)
+        {
+            _config = config;
+            _userCts = userCts;
+        }
+
+        public Task<RepositoryUpdateResult> UpdateAsync(
+            RepositoryConfiguration repository,
+            CancellationToken cancellationToken)
+        {
+            // Simulate Cancel pressed after git pull committed but before
+            // the dashboard fallback inspection runs.
+            _userCts.Cancel();
+
+            return Task.FromResult(new RepositoryUpdateResult
+            {
+                RepositoryId = _config.Id,
+                Outcome = RepositoryUpdateOutcome.Updated,
+                Message = "Fast-forwarded 'main' by 1 commit(s) from 'origin/main'.",
+                Decision = new UpdateDecision(
+                    UpdateEligibility.CanFastForward,
+                    "Current branch can fast-forward by 1 commit(s)."),
+                FetchResult = new RepositoryOperationResult
+                {
+                    Success = true,
+                    Operation = RepositoryOperationType.Fetch,
+                    Message = "Fetched 'origin' (pruned).",
+                    Duration = TimeSpan.Zero
+                },
+                FinalSnapshot = null
+            });
+        }
+    }
+
+    private sealed class CancellingInspector : IRepositoryInspector
+    {
+        public CancellationToken LastToken { get; private set; }
+
+        public Task<RepositorySnapshot> InspectAsync(
+            RepositoryConfiguration repository,
+            CancellationToken cancellationToken)
+        {
+            LastToken = cancellationToken;
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(Snapshot(repository));
         }
     }
 
@@ -171,5 +232,88 @@ public sealed class RepositoryUpdateCancellationTests
         var result = await updateTask;
 
         result.Outcome.Should().Be(RepositoryUpdateOutcome.Updated);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_UserCancelAfterPull_WithShutdownWired_StillReportsUpdated()
+    {
+        var config = Config("Store");
+        var runner = new PullSuccessRunner();
+        var inspector = new BlockingFinalInspector();
+        using var shutdown = new ApplicationShutdown();
+        var sut = new RepositoryUpdater(
+            runner,
+            new RepositoryFetcher(runner),
+            inspector,
+            new UpdateEligibilityClassifier(),
+            applicationShutdown: shutdown);
+
+        using var userCts = new CancellationTokenSource();
+        var updateTask = sut.UpdateAsync(config, userCts.Token);
+
+        await WaitForAsync(() => inspector.Calls >= 2, "final inspection to start");
+        await userCts.CancelAsync();
+        inspector.Release();
+
+        var result = await updateTask;
+
+        result.Outcome.Should().Be(RepositoryUpdateOutcome.Updated);
+        inspector.LastToken.Should().Be(shutdown.ShutdownToken);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ShutdownDuringPostPullInspection_CancelsGitWork()
+    {
+        var config = Config("Store");
+        var runner = new PullSuccessRunner();
+        var inspector = new BlockingFinalInspector();
+        using var shutdown = new ApplicationShutdown();
+        var sut = new RepositoryUpdater(
+            runner,
+            new RepositoryFetcher(runner),
+            inspector,
+            new UpdateEligibilityClassifier(),
+            applicationShutdown: shutdown);
+
+        using var userCts = new CancellationTokenSource();
+        var updateTask = sut.UpdateAsync(config, userCts.Token);
+
+        await WaitForAsync(() => inspector.Calls >= 2, "final inspection to start");
+
+        // Shutdown (not user Cancel) must still terminate the post-pull
+        // Git work: the final inspection observes only the shutdown token.
+        shutdown.NotifyShuttingDown();
+
+        var act = () => updateTask;
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task UpdateAllAsync_FirstFinalInspectionFails_UserCancelAlreadySet_StillReportsUpdated()
+    {
+        var config = Config("Store");
+        using var userCts = new CancellationTokenSource();
+        using var shutdown = new ApplicationShutdown();
+        var inspector = new CancellingInspector();
+        var updater = new FailFirstFinalUpdater(config, userCts);
+        var sut = new RepositoryDashboardService(
+            new InMemoryStore([config]),
+            inspector,
+            new UpdateEligibilityClassifier(),
+            new RepositoryFetcher(new PullSuccessRunner()),
+            updater,
+            applicationShutdown: shutdown);
+
+        var batch = await sut.UpdateAllAsync(userCts.Token);
+
+        // User Cancel was pressed after the pull committed (the updater
+        // cancelled the user CTS) but the fallback uses the shutdown-only
+        // token, so the committed Updated outcome survives in the batch.
+        batch.CompletedItems.Should().ContainSingle();
+        batch.CompletedItems[0].UpdateResult.Should().NotBeNull();
+        batch.CompletedItems[0].UpdateResult!.Outcome
+            .Should().Be(RepositoryUpdateOutcome.Updated);
+        inspector.LastToken.Should().Be(shutdown.ShutdownToken);
     }
 }

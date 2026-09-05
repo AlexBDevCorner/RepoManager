@@ -3,6 +3,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using RepoDashboard.Core.Git;
+using RepoDashboard.Core.Lifetime;
 
 namespace RepoDashboard.Infrastructure.Git;
 
@@ -13,14 +14,25 @@ namespace RepoDashboard.Infrastructure.Git;
 /// embed credential-bearing URLs. The working directory is never logged
 /// either (it can contain user names). Callers log repository identity
 /// plus the classified <see cref="GitFailureKind"/> instead.
+/// <para/>
+/// Every spawned process observes both the caller's token (user Cancel)
+/// and the application shutdown token (Task 44). Post-commit work
+/// deliberately ignores user cancellation by passing a shutdown-only
+/// token, yet its Git processes are still killed when the application
+/// exits — shutdown can never be bypassed with
+/// <see cref="CancellationToken.None"/>.
 /// </summary>
 public sealed class GitCommandRunner : IGitCommandRunner
 {
     private readonly ILogger<GitCommandRunner> _logger;
+    private readonly CancellationToken _shutdownToken;
 
-    public GitCommandRunner(ILogger<GitCommandRunner>? logger = null)
+    public GitCommandRunner(
+        ILogger<GitCommandRunner>? logger = null,
+        IApplicationShutdown? applicationShutdown = null)
     {
         _logger = logger ?? NullLogger<GitCommandRunner>.Instance;
+        _shutdownToken = applicationShutdown?.ShutdownToken ?? CancellationToken.None;
     }
 
     public async Task<GitCommandResult> ExecuteAsync(
@@ -31,8 +43,18 @@ public sealed class GitCommandRunner : IGitCommandRunner
         ArgumentException.ThrowIfNullOrWhiteSpace(repositoryPath);
         ArgumentNullException.ThrowIfNull(arguments);
 
-        // Never launch git.exe for an already-cancelled operation.
-        cancellationToken.ThrowIfCancellationRequested();
+        // Observe shutdown for every process: link the caller's (user-cancel)
+        // token with the application lifetime token. Post-commit work passes
+        // a shutdown-only token (ignoring Cancel) yet is still killed when
+        // the application exits. When no lifetime is wired (unit tests) the
+        // shutdown side is None and behaviour is unchanged.
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, _shutdownToken);
+        var effectiveToken = linked.Token;
+
+        // Never launch git.exe for an already-cancelled operation
+        // (either user Cancel or shutdown).
+        effectiveToken.ThrowIfCancellationRequested();
 
         var startInfo = new ProcessStartInfo
         {
@@ -64,18 +86,20 @@ public sealed class GitCommandRunner : IGitCommandRunner
         // and cannot await our continuation before the process exits, so
         // without this the app could race process termination and orphan
         // git.exe. The catch block is kept as cleanup/wait.
-        using var killRegistration = cancellationToken.Register(
+        // Registered on the linked (user + shutdown) token so shutdown
+        // kills even post-commit processes that ignore user Cancel.
+        using var killRegistration = effectiveToken.Register(
             () => TryKillProcessTree(process));
 
         try
         {
             var outputTask =
-                process.StandardOutput.ReadToEndAsync(cancellationToken);
+                process.StandardOutput.ReadToEndAsync(effectiveToken);
 
             var errorTask =
-                process.StandardError.ReadToEndAsync(cancellationToken);
+                process.StandardError.ReadToEndAsync(effectiveToken);
 
-            await process.WaitForExitAsync(cancellationToken);
+            await process.WaitForExitAsync(effectiveToken);
 
             var output = await outputTask;
             var error = await errorTask;

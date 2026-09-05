@@ -8,6 +8,7 @@ using RepoDashboard.App.Services;
 using RepoDashboard.Core.Dashboard;
 using RepoDashboard.Core.Discovery;
 using RepoDashboard.Core.Git;
+using RepoDashboard.Core.Lifetime;
 using RepoDashboard.Core.Sync;
 
 namespace RepoDashboard.App.ViewModels;
@@ -42,8 +43,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// <summary>
     /// Application lifetime: cancelled once on shutdown so no new Git work
     /// starts while the host drains. Linked into every operation.
+    /// When a shared <see cref="IApplicationShutdown"/> is injected (production),
+    /// its shutdown token is the canonical shutdown signal and this local
+    /// source is still cancelled on shutdown for backward-compatible drains;
+    /// unit tests without a lifetime use only this local source.
     /// </summary>
     private readonly CancellationTokenSource _appLifetime = new();
+    private readonly IApplicationShutdown? _applicationShutdown;
 
     public ObservableCollection<RepositoryRowViewModel> Repositories { get; } = [];
 
@@ -105,7 +111,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         IRepositoryDashboardService dashboard,
         IFolderPickerService folderPicker,
         IRepositoryDiscoveryService? discovery = null,
-        IDiscoveryDialogService? discoveryDialog = null)
+        IDiscoveryDialogService? discoveryDialog = null,
+        IApplicationShutdown? applicationShutdown = null)
     {
         ArgumentNullException.ThrowIfNull(gitEnvironment);
         ArgumentNullException.ThrowIfNull(dashboard);
@@ -115,6 +122,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _folderPicker = folderPicker;
         _discovery = discovery ?? new StubDiscoveryService();
         _discoveryDialog = discoveryDialog ?? new StubDiscoveryDialogService();
+        _applicationShutdown = applicationShutdown;
     }
 
     /// <summary>
@@ -122,11 +130,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// application lifetime token so shutdown (Task 44) cancels in-flight
     /// work. The caller must pass the result to
     /// <see cref="EndOperation"/> in a finally block.
+    /// The shutdown side is the shared lifetime when wired, else the local
+    /// lifetime — either way user Cancel (via <see cref="CancelActiveOperation"/>)
+    /// and shutdown stay linked here, while post-commit stages downstream
+    /// observe only the shutdown side.
     /// </summary>
     private CancellationTokenSource BeginOperation(CancellationToken commandToken)
     {
+        var shutdownToken = _applicationShutdown?.ShutdownToken ?? _appLifetime.Token;
         var cts = CancellationTokenSource.CreateLinkedTokenSource(
-            commandToken, _appLifetime.Token);
+            commandToken, shutdownToken);
         _activeOperation = cts;
         CancelCommand.NotifyCanExecuteChanged();
         return cts;
@@ -162,10 +175,20 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// <summary>
     /// Signals application shutdown (Task 44): no new operations may start
     /// (their linked token is already cancelled) and the running operation
-    /// is cancelled so its git.exe process tree is killed.
+    /// is cancelled so its git.exe process tree is killed. Notifies the
+    /// shared lifetime first so post-commit stages observing only shutdown
+    /// are also terminated.
     /// </summary>
     public void NotifyShuttingDown()
     {
+        try
+        {
+            _applicationShutdown?.NotifyShuttingDown();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
         try
         {
             _appLifetime.Cancel();
