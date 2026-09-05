@@ -15,6 +15,14 @@ public sealed record RepositoryOperationResult
 
     public string? RawOutput { get; init; }
 
+    /// <summary>
+    /// Friendly hint for known Git failure patterns (Task 42), or null
+    /// when the output matches nothing known. Raw output in
+    /// <see cref="RawOutput"/>/<see cref="Message"/> is always preserved —
+    /// the hint is guidance alongside it, never a replacement.
+    /// </summary>
+    public string? FriendlyHint { get; init; }
+
     public int? ExitCode { get; init; }
 
     public TimeSpan Duration { get; init; }

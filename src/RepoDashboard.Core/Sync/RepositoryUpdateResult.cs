@@ -37,4 +37,12 @@ public sealed record RepositoryUpdateResult
     /// unexpectedly instead of returning a failure.
     /// </summary>
     public RepositoryOperationResult? FetchResult { get; init; }
+
+    /// <summary>
+    /// Friendly hint for known Git failure patterns (Task 42), covering
+    /// the pull step when it fails. Fetch-step hints live on
+    /// <see cref="FetchResult"/>. Null when no known pattern matched.
+    /// Raw diagnostics stay in <see cref="Message"/>.
+    /// </summary>
+    public string? FriendlyHint { get; init; }
 }

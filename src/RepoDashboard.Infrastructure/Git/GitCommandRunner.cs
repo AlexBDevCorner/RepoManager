@@ -1,11 +1,28 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RepoDashboard.Core.Git;
 
 namespace RepoDashboard.Infrastructure.Git;
 
+/// <summary>
+/// Executes <c>git.exe</c> directly (never via a shell) with structured
+/// logging (Task 41): command, duration, exit code. Standard output is
+/// never logged — it can be large and is not diagnostic. Standard error
+/// is logged only on failure and only at Debug level, and never includes
+/// secrets: arguments here are fixed Git verbs, never credentials or
+/// environment variables.
+/// </summary>
 public sealed class GitCommandRunner : IGitCommandRunner
 {
+    private readonly ILogger<GitCommandRunner> _logger;
+
+    public GitCommandRunner(ILogger<GitCommandRunner>? logger = null)
+    {
+        _logger = logger ?? NullLogger<GitCommandRunner>.Instance;
+    }
+
     public async Task<GitCommandResult> ExecuteAsync(
         string repositoryPath,
         IReadOnlyList<string> arguments,
@@ -55,6 +72,14 @@ public sealed class GitCommandRunner : IGitCommandRunner
             var error = await errorTask;
 
             stopwatch.Stop();
+
+            // Debug only: success is routine, failures are warned by callers
+            // (fetcher/updater) with repository context. Arguments are safe
+            // Git verbs — never credentials — so logging them is fine.
+            _logger.LogDebug(
+                "git {Arguments} in {Path} exited {ExitCode} in {DurationMs} ms",
+                string.Join(' ', arguments), repositoryPath,
+                process.ExitCode, stopwatch.Elapsed.TotalMilliseconds);
 
             return new GitCommandResult
             {

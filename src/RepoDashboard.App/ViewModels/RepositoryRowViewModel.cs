@@ -77,6 +77,9 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
     private string _detailsGitError = string.Empty;
 
     [ObservableProperty]
+    private string _detailsGitHint = string.Empty;
+
+    [ObservableProperty]
     private bool _isStale;
 
     [ObservableProperty]
@@ -265,6 +268,7 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
                 ? item.UpdateResult.Message
                 : null)
             ?? string.Empty;
+        DetailsGitHint = item.FriendlyHint ?? string.Empty;
 
         MapStaleness(item.LastSuccessfulFetch);
     }

@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RepoDashboard.Core.Git;
 using RepoDashboard.Core.Models;
 using RepoDashboard.Core.Sync;
@@ -21,12 +24,14 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
     private readonly IRepositoryFetcher _fetcher;
     private readonly IRepositoryInspector _inspector;
     private readonly IUpdateEligibilityClassifier _classifier;
+    private readonly ILogger<RepositoryUpdater> _logger;
 
     public RepositoryUpdater(
         IGitCommandRunner runner,
         IRepositoryFetcher fetcher,
         IRepositoryInspector inspector,
-        IUpdateEligibilityClassifier classifier)
+        IUpdateEligibilityClassifier classifier,
+        ILogger<RepositoryUpdater>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(runner);
         ArgumentNullException.ThrowIfNull(fetcher);
@@ -36,6 +41,7 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
         _fetcher = fetcher;
         _inspector = inspector;
         _classifier = classifier;
+        _logger = logger ?? NullLogger<RepositoryUpdater>.Instance;
     }
 
     public async Task<RepositoryUpdateResult> UpdateAsync(
@@ -43,6 +49,11 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(repository);
+
+        _logger.LogInformation(
+            "Updating repository {Repository}", repository.Name);
+
+        var stopwatch = Stopwatch.StartNew();
 
         // Step 1 — Fetch. Safe even when the working tree is dirty;
         // without it every divergence below would be stale.
@@ -52,6 +63,12 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
         {
             // The fetcher threw unexpectedly (it normally maps Git failures
             // to failed results instead of throwing).
+            stopwatch.Stop();
+            _logger.LogWarning(
+                "Update failed for {Repository}: fetch threw unexpectedly. "
+                + "Duration {DurationSec:F2} sec",
+                repository.Name, stopwatch.Elapsed.TotalSeconds);
+
             return new RepositoryUpdateResult
             {
                 RepositoryId = repository.Id,
@@ -63,12 +80,20 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
 
         if (!fetchResult.Success)
         {
+            stopwatch.Stop();
+            _logger.LogWarning(
+                "Update failed for {Repository}: fetch failed with exit code {ExitCode}. "
+                + "Duration {DurationSec:F2} sec. Error: {Error}",
+                repository.Name, fetchResult.ExitCode,
+                stopwatch.Elapsed.TotalSeconds, fetchResult.Message);
+
             return new RepositoryUpdateResult
             {
                 RepositoryId = repository.Id,
                 Outcome = RepositoryUpdateOutcome.Failed,
                 Message = fetchResult.Message,
                 FetchResult = fetchResult,
+                FriendlyHint = fetchResult.FriendlyHint,
                 FinalSnapshot = await InspectBestEffortAsync(repository, cancellationToken)
             };
         }
@@ -86,12 +111,19 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
         }
         catch (Exception ex)
         {
+            stopwatch.Stop();
+            _logger.LogWarning(
+                "Update failed for {Repository}: inspection failed ({Error}). "
+                + "Duration {DurationSec:F2} sec",
+                repository.Name, ex.Message, stopwatch.Elapsed.TotalSeconds);
+
             return new RepositoryUpdateResult
             {
                 RepositoryId = repository.Id,
                 Outcome = RepositoryUpdateOutcome.Failed,
                 Message = ex.Message,
                 FetchResult = fetchResult,
+                FriendlyHint = GitErrorClassifier.GetFriendlyHint(ex.Message),
                 FinalSnapshot = null
             };
         }
@@ -102,6 +134,13 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
         // Step 4 — Skip anything that is not provably fast-forwardable.
         if (!decision.CanUpdate)
         {
+            stopwatch.Stop();
+            _logger.LogInformation(
+                "Update skipped for {Repository}: {Reason}. "
+                + "Duration {DurationSec:F2} sec",
+                repository.Name, decision.Eligibility,
+                stopwatch.Elapsed.TotalSeconds);
+
             return new RepositoryUpdateResult
             {
                 RepositoryId = repository.Id,
@@ -128,10 +167,20 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
         }
         catch (OperationCanceledException)
         {
+            stopwatch.Stop();
+            _logger.LogInformation(
+                "Update cancelled for {Repository} after {DurationSec:F2} sec",
+                repository.Name, stopwatch.Elapsed.TotalSeconds);
             throw;
         }
         catch (Exception ex)
         {
+            stopwatch.Stop();
+            _logger.LogWarning(
+                "Update failed for {Repository}: could not run git pull ({Error}). "
+                + "Duration {DurationSec:F2} sec",
+                repository.Name, ex.Message, stopwatch.Elapsed.TotalSeconds);
+
             return new RepositoryUpdateResult
             {
                 RepositoryId = repository.Id,
@@ -139,6 +188,7 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
                 Message = $"Could not run git pull: {ex.Message}",
                 Decision = decision,
                 FetchResult = fetchResult,
+                FriendlyHint = GitErrorClassifier.GetFriendlyHint(ex.Message),
                 FinalSnapshot = await InspectBestEffortAsync(repository, cancellationToken)
             };
         }
@@ -149,10 +199,28 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
             // other reason): a safe failure. Never fall back to another
             // strategy — especially not merge / rebase / reset / stash.
             var detail = FirstNonEmpty(pull.StandardError, pull.StandardOutput);
+            var rawCombined = string.Concat(
+                pull.StandardOutput,
+                pull.StandardError.Length > 0 && pull.StandardOutput.Length > 0 ? "\n" : string.Empty,
+                pull.StandardError).Trim();
+            var hint = GitErrorClassifier.GetFriendlyHint(
+                rawCombined.Length == 0 ? detail : rawCombined);
 
             var message = string.IsNullOrEmpty(detail)
                 ? $"Update failed safely: git pull --ff-only --no-rebase failed with exit code {pull.ExitCode}."
                 : $"Update failed safely: git pull --ff-only --no-rebase failed with exit code {pull.ExitCode}: {detail}";
+
+            if (hint is not null)
+            {
+                message = $"{hint} {message}";
+            }
+
+            stopwatch.Stop();
+            _logger.LogWarning(
+                "Update failed for {Repository}. Git exit code {ExitCode}. "
+                + "Duration {DurationSec:F2} sec. Error: {Error}",
+                repository.Name, pull.ExitCode,
+                stopwatch.Elapsed.TotalSeconds, detail);
 
             return new RepositoryUpdateResult
             {
@@ -161,6 +229,7 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
                 Message = message,
                 Decision = decision,
                 FetchResult = fetchResult,
+                FriendlyHint = hint,
                 FinalSnapshot = await InspectBestEffortAsync(repository, cancellationToken)
             };
         }
@@ -169,6 +238,11 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
         try
         {
             var final = await _inspector.InspectAsync(repository, cancellationToken);
+
+            stopwatch.Stop();
+            _logger.LogInformation(
+                "Update completed for {Repository} in {DurationSec:F2} sec",
+                repository.Name, stopwatch.Elapsed.TotalSeconds);
 
             return new RepositoryUpdateResult
             {
@@ -188,6 +262,12 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
         {
             // The pull succeeded — reporting failure would lie. The caller
             // re-inspects when FinalSnapshot is null.
+            stopwatch.Stop();
+            _logger.LogInformation(
+                "Update completed for {Repository} in {DurationSec:F2} sec "
+                + "(final re-inspection failed: {Error})",
+                repository.Name, stopwatch.Elapsed.TotalSeconds, ex.Message);
+
             return new RepositoryUpdateResult
             {
                 RepositoryId = repository.Id,
