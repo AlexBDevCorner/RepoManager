@@ -155,6 +155,247 @@ public sealed class RepositoryRowViewModelTests
     }
 
     [Fact]
+    public void Never_fetched_row_is_flagged_as_potentially_stale()
+    {
+        var row = new RepositoryRowViewModel(Item(lastFetch: null));
+
+        row.IsStale.Should().BeTrue();
+        row.StaleText.Should().Be("Remote state may be stale");
+        row.LastFetchText.Should().Be("Never");
+    }
+
+    [Fact]
+    public void Freshly_fetched_row_is_not_stale()
+    {
+        var row = new RepositoryRowViewModel(
+            Item(
+                upstream: new Divergence(0, 0),
+                lastFetch: DateTimeOffset.UtcNow));
+
+        row.IsStale.Should().BeFalse();
+        row.StaleText.Should().BeEmpty();
+        // No operation produced this row (plain load): a historical
+        // timestamp alone must not read as "Fetch successful".
+        row.DetailsLastOperation.Should().Be("—");
+    }
+
+    [Fact]
+    public void Load_with_old_persisted_fetch_claims_no_operation()
+    {
+        var item = Item(lastFetch: DateTimeOffset.UtcNow.AddDays(-2));
+
+        var row = new RepositoryRowViewModel(item);
+
+        row.DetailsLastOperation.Should().Be("—");
+        row.IsStale.Should().BeTrue();
+    }
+
+    [Fact]
+    public void Fetch_item_reports_fetch_successful()
+    {
+        var item = Item(lastFetch: DateTimeOffset.UtcNow) with
+        {
+            LastOperation = RepositoryOperationType.Fetch
+        };
+
+        var row = new RepositoryRowViewModel(item);
+
+        row.DetailsLastOperation.Should().Be("Fetch successful");
+    }
+
+    [Fact]
+    public void Refresh_item_reports_refreshed()
+    {
+        var item = Item(lastFetch: DateTimeOffset.UtcNow) with
+        {
+            LastOperation = RepositoryOperationType.Refresh
+        };
+
+        var row = new RepositoryRowViewModel(item);
+
+        row.DetailsLastOperation.Should().Be("Refreshed");
+    }
+
+    [Fact]
+    public void Days_old_fetch_is_flagged_as_potentially_stale()
+    {
+        var row = new RepositoryRowViewModel(
+            Item(lastFetch: DateTimeOffset.UtcNow.AddDays(-3)));
+
+        row.IsStale.Should().BeTrue();
+        row.StaleText.Should().Be("Remote state may be stale");
+        row.LastFetchText.Should().Be("3 d ago");
+    }
+
+    [Fact]
+    public void Details_panel_maps_selection_fields()
+    {
+        var row = new RepositoryRowViewModel(
+            Item(
+                branch: "feature/search",
+                upstream: new Divergence(2, 0),
+                defaultBranch: "main",
+                defaultDivergence: new Divergence(5, 3),
+                eligibility: UpdateEligibility.Ahead,
+                lastFetch: DateTimeOffset.UtcNow));
+
+        row.DetailsPath.Should().Be("""C:\Source\Repos\Store""");
+        row.DetailsBranch.Should().Be("feature/search");
+        row.DetailsUpstream.Should().Be("origin/feature/search");
+        row.DetailsRemoteDefault.Should().Be("origin/main");
+        row.DetailsRemote.Should().Be("origin");
+        row.DetailsVsUpstream.Should().Be("2 ahead / 0 behind");
+        row.DetailsVsDefault.Should().Be("5 ahead / 3 behind");
+        row.DetailsWorkingTree.Should().Be("Clean");
+        row.DetailsLastFetch.Should().NotBe("Never");
+        row.DetailsLastOperation.Should().Be("—");
+        row.DetailsGitError.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Failed_inspection_details_show_git_error()
+    {
+        var configuration = new RepositoryConfiguration
+        {
+            Id = Guid.NewGuid(),
+            Name = "Broken",
+            Path = """C:\Source\Repos\Broken"""
+        };
+
+        const string error = "fatal: unable to access 'https://example.invalid/'";
+
+        var row = new RepositoryRowViewModel(new RepositoryDashboardItem
+        {
+            Configuration = configuration,
+            Snapshot = new RepositorySnapshot
+            {
+                RepositoryId = configuration.Id,
+                Path = configuration.Path,
+                InspectedAt = DateTimeOffset.UtcNow
+            },
+            UpdateDecision = new UpdateDecision(
+                UpdateEligibility.Unknown, error),
+            InspectionError = error
+        });
+
+        row.DetailsGitError.Should().Be(error);
+        row.DetailsLastOperation.Should().Be("—");
+        row.DetailsWorkingTree.Should().Be("Error");
+    }
+
+    private sealed class ManualTimeProvider : TimeProvider
+    {
+        public DateTimeOffset Now = DateTimeOffset.UtcNow;
+
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
+    [Fact]
+    public void Skipped_activity_stays_compact_with_full_reason_in_details()
+    {
+        const string message =
+            "The working tree contains uncommitted changes. " +
+            "Automatic update was skipped to avoid touching your edits.";
+        var loaded = Item();
+        var skipped = loaded with
+        {
+            UpdateDecision = new UpdateDecision(UpdateEligibility.Dirty, message),
+            UpdateResult = new RepositoryUpdateResult
+            {
+                RepositoryId = loaded.Configuration.Id,
+                Outcome = RepositoryUpdateOutcome.Skipped,
+                Message = message,
+                Decision = new UpdateDecision(UpdateEligibility.Dirty, message),
+                FinalSnapshot = loaded.Snapshot
+            },
+            LastOperation = RepositoryOperationType.Update
+        };
+
+        var row = new RepositoryRowViewModel(skipped);
+
+        row.Activity.Should().Be(RepositoryActivity.Skipped);
+        row.ActivityText.Should().Be("Skipped — dirty");
+        row.Explanation.Should().Be(message);
+        row.DetailsLastOperation.Should().Be("Update skipped");
+    }
+
+    [Fact]
+    public void Failed_update_activity_stays_compact_with_error_in_details()
+    {
+        const string message = "fatal: Not possible to fast-forward to 'abc123'.";
+        var loaded = Item();
+        var failed = loaded with
+        {
+            UpdateResult = new RepositoryUpdateResult
+            {
+                RepositoryId = loaded.Configuration.Id,
+                Outcome = RepositoryUpdateOutcome.Failed,
+                Message = message,
+                FinalSnapshot = loaded.Snapshot
+            },
+            LastOperation = RepositoryOperationType.Update
+        };
+
+        var row = new RepositoryRowViewModel(failed);
+
+        row.Activity.Should().Be(RepositoryActivity.Failed);
+        row.ActivityText.Should().Be("Update failed");
+        row.DetailsGitError.Should().Be(message);
+        row.DetailsLastOperation.Should().Be("Update failed");
+    }
+
+    [Fact]
+    public void Failed_fetch_activity_stays_compact_with_error_in_details()
+    {
+        const string error = "fatal: unable to access 'https://example.invalid/': boom";
+        var loaded = Item();
+        var failed = loaded with
+        {
+            FetchError = error,
+            LastOperation = RepositoryOperationType.Fetch
+        };
+
+        var row = new RepositoryRowViewModel(failed);
+
+        row.Activity.Should().Be(RepositoryActivity.Failed);
+        row.ActivityText.Should().Be("Fetch failed");
+        row.DetailsGitError.Should().Be(error);
+        row.DetailsLastOperation.Should().Be("Fetch failed");
+    }
+
+    [Fact]
+    public void RefreshTimeDisplay_marks_row_stale_without_new_git_data()
+    {
+        var start = DateTimeOffset.UtcNow;
+        var clock = new ManualTimeProvider { Now = start };
+        var row = new RepositoryRowViewModel(Item(lastFetch: start))
+        {
+            TimeProvider = clock
+        };
+
+        row.IsStale.Should().BeFalse();
+
+        clock.Now = start.AddHours(25);
+        row.RefreshTimeDisplay();
+
+        row.IsStale.Should().BeTrue();
+        row.StaleText.Should().Be("Remote state may be stale");
+        row.LastFetchText.Should().Be("1 d ago");
+    }
+
+    [Fact]
+    public void RefreshTimeDisplay_preserves_in_progress_activity()
+    {
+        var row = new RepositoryRowViewModel(Item(lastFetch: DateTimeOffset.UtcNow));
+        row.SetActivity(RepositoryActivity.Fetching, "Fetching...");
+
+        row.RefreshTimeDisplay();
+
+        row.Activity.Should().Be(RepositoryActivity.Fetching);
+        row.ActivityText.Should().Be("Fetching...");
+    }
+
+    [Fact]
     public void Update_refreshes_properties_in_place()
     {
         var row = new RepositoryRowViewModel(Item(branch: "main"));

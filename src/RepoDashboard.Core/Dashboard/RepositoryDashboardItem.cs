@@ -41,5 +41,12 @@ public sealed record RepositoryDashboardItem
     /// </summary>
     public RepositoryUpdateResult? UpdateResult { get; init; }
 
+    /// <summary>
+    /// Which operation produced this item, if any. Load/Add carry no
+    /// operation (<c>null</c>): a historical <c>LastSuccessfulFetch</c>
+    /// alone must never be presented as "the last operation was a fetch".
+    /// </summary>
+    public RepositoryOperationType? LastOperation { get; init; }
+
     public DateTimeOffset? LastSuccessfulFetch { get; init; }
 }
