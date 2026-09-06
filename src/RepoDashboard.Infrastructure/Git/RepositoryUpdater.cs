@@ -157,6 +157,19 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
             };
         }
 
+        // Mutation boundary: user cancellation is honored until the mutating
+        // pull begins; once the pull starts only application shutdown can
+        // abort it. Killing git.exe mid-pull could interrupt an active
+        // worktree update and leave the dashboard showing stale pre-pull
+        // state for a repository that already changed on disk. The pull and
+        // the final re-inspection therefore share the same shutdown-only
+        // token (or None when no lifetime is wired, e.g. unit tests).
+        // GitCommandRunner additionally observes shutdown for every process
+        // as defense-in-depth.
+        var mutationToken = _shutdownToken.CanBeCanceled
+            ? _shutdownToken
+            : CancellationToken.None;
+
         // Step 5 — Pull, fast-forward only. --no-rebase keeps a global
         // pull.rebase=true from turning this into a rebase. No remote or
         // branch arguments: the classifier already verified the upstream
@@ -168,10 +181,13 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
             pull = await _runner.ExecuteAsync(
                 repository.Path,
                 ["pull", "--ff-only", "--no-rebase"],
-                cancellationToken);
+                mutationToken);
         }
         catch (OperationCanceledException)
         {
+            // Only shutdown can cancel the mutation token (user Cancel is
+            // not observed here). Propagate so shutdown drains promptly and
+            // Task 44's kill guarantee applies.
             stopwatch.Stop();
             _logger.LogInformation(
                 "Update cancelled for {Repository} after {DurationSec:F2} sec",
@@ -242,18 +258,11 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
         }
 
         // Step 6 — Reinspect. Expected final: Ahead 0, Behind 0 vs upstream.
-        // The pull above already mutated the working tree, so this local
-        // post-mutation sync must ignore user cancellation but still honor
-        // application shutdown: cancelling here via the Cancel button would
-        // discard a committed update and leave the UI showing stale
-        // (pre-pull) state while the filesystem is already updated, whereas
-        // shutdown must still kill the inspection's Git processes (Task 44).
-        // Post-commit token is therefore shutdown-only (or None when no
-        // lifetime is wired, e.g. unit tests). GitCommandRunner additionally
-        // observes shutdown for every process as defense-in-depth.
-        var postCommitToken = _shutdownToken.CanBeCanceled
-            ? _shutdownToken
-            : CancellationToken.None;
+        // Uses the same mutation (shutdown-only) token as the pull above:
+        // the mutation already committed, so user Cancel must not discard
+        // it, while shutdown must still kill the inspection's Git processes
+        // (Task 44).
+        var postCommitToken = mutationToken;
         try
         {
             var final = await _inspector.InspectAsync(repository, postCommitToken);

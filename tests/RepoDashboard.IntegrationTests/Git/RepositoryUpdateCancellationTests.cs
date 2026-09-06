@@ -162,6 +162,90 @@ public sealed class RepositoryUpdateCancellationTests
         }
     }
 
+    private sealed class FastForwardInspector : IRepositoryInspector
+    {
+        public Task<RepositorySnapshot> InspectAsync(
+            RepositoryConfiguration repository,
+            CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // Pre-pull: fast-forwardable. Post-pull final: up to date.
+            // Distinguished by caller stage is unnecessary here because the
+            // pull-boundary tests only assert the pull token behaviour and
+            // the final Updated outcome.
+            return Task.FromResult(Snapshot(repository) with
+            {
+                UpstreamDivergence = new Divergence(0, 1)
+            });
+        }
+    }
+
+    private sealed class BlockingPullRunner : IGitCommandRunner
+    {
+        private readonly TaskCompletionSource _gate = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        private int _pullStarted;
+
+        public bool PullStarted => _pullStarted != 0;
+
+        public CancellationToken PullToken { get; private set; }
+
+        public void Release() => _gate.TrySetResult();
+
+        public async Task<GitCommandResult> ExecuteAsync(
+            string repositoryPath,
+            IReadOnlyList<string> arguments,
+            CancellationToken cancellationToken = default)
+        {
+            if (arguments.Count > 0 && arguments[0] == "pull")
+            {
+                Interlocked.Exchange(ref _pullStarted, 1);
+                PullToken = cancellationToken;
+                await _gate.Task.WaitAsync(cancellationToken);
+
+                return new GitCommandResult
+                {
+                    ExitCode = 0,
+                    StandardOutput = string.Empty,
+                    StandardError = string.Empty,
+                    Duration = TimeSpan.Zero
+                };
+            }
+
+            return new GitCommandResult
+            {
+                ExitCode = 0,
+                StandardOutput = string.Empty,
+                StandardError = string.Empty,
+                Duration = TimeSpan.Zero
+            };
+        }
+    }
+
+    private sealed class FinalSnapshotInspector : IRepositoryInspector
+    {
+        private int _calls;
+
+        public async Task<RepositorySnapshot> InspectAsync(
+            RepositoryConfiguration repository,
+            CancellationToken cancellationToken)
+        {
+            var call = Interlocked.Increment(ref _calls);
+
+            if (call == 1)
+            {
+                return Snapshot(repository) with
+                {
+                    UpstreamDivergence = new Divergence(0, 1)
+                };
+            }
+
+            return Snapshot(repository);
+        }
+    }
+
     private static async Task WaitForAsync(Func<bool> condition, string what)
     {
         var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
@@ -282,6 +366,62 @@ public sealed class RepositoryUpdateCancellationTests
 
         // Shutdown (not user Cancel) must still terminate the post-pull
         // Git work: the final inspection observes only the shutdown token.
+        shutdown.NotifyShuttingDown();
+
+        var act = () => updateTask;
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
+    }
+
+    [Fact]
+    public async Task UpdateAsync_UserCancelDuringPull_DoesNotAbortPull_StillReportsUpdated()
+    {
+        var config = Config("Store");
+        var pullRunner = new BlockingPullRunner();
+        using var shutdown = new ApplicationShutdown();
+        var sut = new RepositoryUpdater(
+            pullRunner,
+            new RepositoryFetcher(new PullSuccessRunner()),
+            new FinalSnapshotInspector(),
+            new UpdateEligibilityClassifier(),
+            applicationShutdown: shutdown);
+
+        using var userCts = new CancellationTokenSource();
+        var updateTask = sut.UpdateAsync(config, userCts.Token);
+
+        await WaitForAsync(() => pullRunner.PullStarted, "git pull to start");
+        await userCts.CancelAsync();
+        await Task.Delay(100);
+
+        // User Cancel must not reach the mutating pull: the pull observes
+        // only shutdown, so it stays blocked and the update stays in flight.
+        updateTask.IsCompleted.Should().BeFalse();
+        pullRunner.PullToken.CanBeCanceled.Should().BeTrue();
+        pullRunner.PullToken.IsCancellationRequested.Should().BeFalse();
+
+        pullRunner.Release();
+        var result = await updateTask;
+
+        result.Outcome.Should().Be(RepositoryUpdateOutcome.Updated);
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ShutdownDuringPull_CancelsPull()
+    {
+        var config = Config("Store");
+        var pullRunner = new BlockingPullRunner();
+        using var shutdown = new ApplicationShutdown();
+        var sut = new RepositoryUpdater(
+            pullRunner,
+            new RepositoryFetcher(new PullSuccessRunner()),
+            new FinalSnapshotInspector(),
+            new UpdateEligibilityClassifier(),
+            applicationShutdown: shutdown);
+
+        using var userCts = new CancellationTokenSource();
+        var updateTask = sut.UpdateAsync(config, userCts.Token);
+
+        await WaitForAsync(() => pullRunner.PullStarted, "git pull to start");
         shutdown.NotifyShuttingDown();
 
         var act = () => updateTask;
