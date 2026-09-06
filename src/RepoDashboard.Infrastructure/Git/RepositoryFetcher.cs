@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RepoDashboard.Core.Git;
 using RepoDashboard.Core.Models;
 using RepoDashboard.Core.Sync;
@@ -12,15 +14,25 @@ namespace RepoDashboard.Infrastructure.Git;
 /// is never parsed. A non-zero Git exit becomes a failed
 /// <see cref="RepositoryOperationResult"/>, not an exception, so
 /// batch operations can collect every result.
+/// Structured logging (Task 41) records repository, operation,
+/// duration, exit code, outcome and the classified
+/// <see cref="GitFailureKind"/> — never raw Git output. Git stderr can
+/// embed credential-bearing URLs (<c>https://user:token@host/...</c>),
+/// so raw text stays in the UI details model only. Secrets, environment
+/// variables and config values are never logged.
 /// </summary>
 public sealed class RepositoryFetcher : IRepositoryFetcher
 {
     private readonly IGitCommandRunner _runner;
+    private readonly ILogger<RepositoryFetcher> _logger;
 
-    public RepositoryFetcher(IGitCommandRunner runner)
+    public RepositoryFetcher(
+        IGitCommandRunner runner,
+        ILogger<RepositoryFetcher>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(runner);
         _runner = runner;
+        _logger = logger ?? NullLogger<RepositoryFetcher>.Instance;
     }
 
     public async Task<RepositoryOperationResult> FetchAsync(
@@ -32,6 +44,14 @@ public sealed class RepositoryFetcher : IRepositoryFetcher
         var remote = string.IsNullOrWhiteSpace(repository.PreferredRemote)
             ? "origin"
             : repository.PreferredRemote.Trim();
+
+        // Never log the remote value: PreferredRemote is an unconstrained
+        // string and can hold a credential-bearing URL. The remote is still
+        // passed to Git as an argument (that is its function); it just never
+        // reaches application logs.
+        _logger.LogInformation(
+            "Fetching repository {Repository}",
+            repository.Name);
 
         var stopwatch = Stopwatch.StartNew();
 
@@ -46,6 +66,10 @@ public sealed class RepositoryFetcher : IRepositoryFetcher
         }
         catch (OperationCanceledException)
         {
+            stopwatch.Stop();
+            _logger.LogInformation(
+                "Fetch cancelled for {Repository} after {DurationMs} ms",
+                repository.Name, stopwatch.Elapsed.TotalMilliseconds);
             throw;
         }
         catch (Exception ex)
@@ -53,13 +77,21 @@ public sealed class RepositoryFetcher : IRepositoryFetcher
             // The Git process never ran (for example the directory is
             // missing): report it as a failed operation so batch fetches
             // keep going instead of aborting on one broken entry.
+            // Never log ex.Message verbatim: it can carry paths/URLs.
+            // Log the exception type plus a sanitized hint instead.
             stopwatch.Stop();
+
+            _logger.LogWarning(
+                "Fetch failed for {Repository}: git process did not run ({ErrorType}). "
+                + "Duration {DurationMs} ms",
+                repository.Name, ex.GetType().Name, stopwatch.Elapsed.TotalMilliseconds);
 
             return new RepositoryOperationResult
             {
                 Success = false,
                 Operation = RepositoryOperationType.Fetch,
                 Message = $"Could not fetch '{remote}' for '{repository.Name}': {ex.Message}",
+                FriendlyHint = GitErrorClassifier.GetFriendlyHint(ex.Message),
                 ExitCode = null,
                 Duration = stopwatch.Elapsed
             };
@@ -69,6 +101,10 @@ public sealed class RepositoryFetcher : IRepositoryFetcher
 
         if (result.Success)
         {
+            _logger.LogInformation(
+                "Fetch completed for {Repository} in {DurationSec:F2} sec (exit {ExitCode})",
+                repository.Name, result.Duration.TotalSeconds, result.ExitCode);
+
             return new RepositoryOperationResult
             {
                 Success = true,
@@ -84,9 +120,27 @@ public sealed class RepositoryFetcher : IRepositoryFetcher
             result.StandardError,
             result.StandardOutput);
 
+        var hint = GitErrorClassifier.GetFriendlyHint(rawOutput ?? detail);
+
         var message = string.IsNullOrEmpty(detail)
             ? $"git fetch {remote} --prune failed with exit code {result.ExitCode}."
             : $"git fetch {remote} --prune failed with exit code {result.ExitCode}: {detail}";
+
+        if (hint is not null)
+        {
+            message = $"{hint} {message}";
+        }
+
+        // Never log raw Git output (detail/rawOutput): it can embed
+        // credential-bearing URLs. Log the classified failure kind instead;
+        // the raw text stays in the result model for the UI details panel.
+        var failureKind = GitErrorClassifier.Classify(rawOutput ?? detail);
+
+        _logger.LogWarning(
+            "Fetch failed for {Repository}. Git exit code {ExitCode}. "
+            + "Duration {DurationSec:F2} sec. FailureKind: {FailureKind}",
+            repository.Name, result.ExitCode,
+            result.Duration.TotalSeconds, failureKind?.ToString() ?? "Unknown");
 
         return new RepositoryOperationResult
         {
@@ -94,6 +148,7 @@ public sealed class RepositoryFetcher : IRepositoryFetcher
             Operation = RepositoryOperationType.Fetch,
             Message = message,
             RawOutput = rawOutput,
+            FriendlyHint = hint,
             ExitCode = result.ExitCode,
             Duration = result.Duration
         };

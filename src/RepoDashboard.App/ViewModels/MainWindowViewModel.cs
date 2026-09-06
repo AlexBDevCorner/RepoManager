@@ -6,7 +6,9 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using RepoDashboard.App.Services;
 using RepoDashboard.Core.Dashboard;
+using RepoDashboard.Core.Discovery;
 using RepoDashboard.Core.Git;
+using RepoDashboard.Core.Lifetime;
 using RepoDashboard.Core.Sync;
 
 namespace RepoDashboard.App.ViewModels;
@@ -16,12 +18,38 @@ namespace RepoDashboard.App.ViewModels;
 /// (see <see cref="App"/> composition root); never instantiated manually in views.
 /// Consumes only <see cref="RepositoryDashboardItem"/> — Git decisions stay
 /// in <see cref="IRepositoryDashboardService"/>.
+/// Cancellation (Task 43): every long operation runs under a linked
+/// <see cref="CancellationTokenSource"/> held in <c>_activeOperation</c>.
+/// <see cref="CancelCommand"/> cancels it: pending repositories never start
+/// (lock/semaphore waits observe the token), the running git.exe is killed
+/// by the command runner, completed rows keep their results, and locks are
+/// always released via finally blocks in the dashboard service.
 /// </summary>
 public sealed partial class MainWindowViewModel : ObservableObject
 {
     private readonly IGitEnvironment _gitEnvironment;
     private readonly IRepositoryDashboardService _dashboard;
     private readonly IFolderPickerService _folderPicker;
+    private readonly IRepositoryDiscoveryService _discovery;
+    private readonly IDiscoveryDialogService _discoveryDialog;
+
+    /// <summary>
+    /// The currently running operation, if any. Cancelled by
+    /// <see cref="CancelCommand"/> (user) and by
+    /// <see cref="NotifyShuttingDown"/> (application exit, Task 44).
+    /// </summary>
+    private CancellationTokenSource? _activeOperation;
+
+    /// <summary>
+    /// Application lifetime: cancelled once on shutdown so no new Git work
+    /// starts while the host drains. Linked into every operation.
+    /// When a shared <see cref="IApplicationShutdown"/> is injected (production),
+    /// its shutdown token is the canonical shutdown signal and this local
+    /// source is still cancelled on shutdown for backward-compatible drains;
+    /// unit tests without a lifetime use only this local source.
+    /// </summary>
+    private readonly CancellationTokenSource _appLifetime = new();
+    private readonly IApplicationShutdown? _applicationShutdown;
 
     public ObservableCollection<RepositoryRowViewModel> Repositories { get; } = [];
 
@@ -46,6 +74,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(LoadCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DiscoverCommand))]
     [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
     [NotifyCanExecuteChangedFor(nameof(RefreshAllCommand))]
     [NotifyCanExecuteChangedFor(nameof(FetchCommand))]
@@ -56,11 +85,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(OpenTerminalCommand))]
     [NotifyCanExecuteChangedFor(nameof(CopyPathCommand))]
     [NotifyCanExecuteChangedFor(nameof(RemoveCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CancelCommand))]
     private bool _isBusy;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(LoadCommand))]
     [NotifyCanExecuteChangedFor(nameof(AddCommand))]
+    [NotifyCanExecuteChangedFor(nameof(DiscoverCommand))]
     [NotifyCanExecuteChangedFor(nameof(RefreshCommand))]
     [NotifyCanExecuteChangedFor(nameof(RefreshAllCommand))]
     [NotifyCanExecuteChangedFor(nameof(FetchCommand))]
@@ -78,7 +109,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public MainWindowViewModel(
         IGitEnvironment gitEnvironment,
         IRepositoryDashboardService dashboard,
-        IFolderPickerService folderPicker)
+        IFolderPickerService folderPicker,
+        IRepositoryDiscoveryService? discovery = null,
+        IDiscoveryDialogService? discoveryDialog = null,
+        IApplicationShutdown? applicationShutdown = null)
     {
         ArgumentNullException.ThrowIfNull(gitEnvironment);
         ArgumentNullException.ThrowIfNull(dashboard);
@@ -86,6 +120,100 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _gitEnvironment = gitEnvironment;
         _dashboard = dashboard;
         _folderPicker = folderPicker;
+        _discovery = discovery ?? new StubDiscoveryService();
+        _discoveryDialog = discoveryDialog ?? new StubDiscoveryDialogService();
+        _applicationShutdown = applicationShutdown;
+    }
+
+    /// <summary>
+    /// Starts tracking a new operation: links the command's token with the
+    /// application lifetime token so shutdown (Task 44) cancels in-flight
+    /// work. The caller must pass the result to
+    /// <see cref="EndOperation"/> in a finally block.
+    /// The shutdown side is the shared lifetime when wired, else the local
+    /// lifetime — either way user Cancel (via <see cref="CancelActiveOperation"/>)
+    /// and shutdown stay linked here, while post-commit stages downstream
+    /// observe only the shutdown side.
+    /// </summary>
+    private CancellationTokenSource BeginOperation(CancellationToken commandToken)
+    {
+        var shutdownToken = _applicationShutdown?.ShutdownToken ?? _appLifetime.Token;
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(
+            commandToken, shutdownToken);
+        _activeOperation = cts;
+        CancelCommand.NotifyCanExecuteChanged();
+        return cts;
+    }
+
+    private void EndOperation(CancellationTokenSource cts)
+    {
+        if (ReferenceEquals(_activeOperation, cts))
+        {
+            _activeOperation = null;
+        }
+
+        cts.Dispose();
+        CancelCommand.NotifyCanExecuteChanged();
+    }
+
+    /// <summary>
+    /// Cancels the running operation, if any. Safe to call when idle.
+    /// Used by the Cancel button and by the application host on shutdown.
+    /// </summary>
+    public void CancelActiveOperation()
+    {
+        try
+        {
+            _activeOperation?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Operation finished between the null check and Cancel.
+        }
+    }
+
+    /// <summary>
+    /// Signals application shutdown (Task 44): no new operations may start
+    /// (their linked token is already cancelled) and the running operation
+    /// is cancelled so its git.exe process tree is killed. Notifies the
+    /// shared lifetime first so post-commit stages observing only shutdown
+    /// are also terminated.
+    /// </summary>
+    public void NotifyShuttingDown()
+    {
+        try
+        {
+            _applicationShutdown?.NotifyShuttingDown();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        try
+        {
+            _appLifetime.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+
+        CancelActiveOperation();
+    }
+
+    private sealed class StubDiscoveryService : IRepositoryDiscoveryService
+    {
+        public Task<IReadOnlyList<DiscoveredRepository>> DiscoverAsync(
+            string rootPath,
+            int maxDepth = 3,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<DiscoveredRepository>>([]);
+    }
+
+    private sealed class StubDiscoveryDialogService : IDiscoveryDialogService
+    {
+        public IReadOnlyList<string>? PickRepositoriesToAdd(
+            IReadOnlyList<DiscoveredRepository> candidates,
+            ISet<string> alreadyTrackedPaths) => null;
     }
 
     public async Task InitializeAsync(
@@ -113,6 +241,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private bool CanLoad() => IsGitAvailable && !IsBusy;
 
     private bool CanAdd() => IsGitAvailable && !IsBusy;
+
+    private bool CanDiscover() => IsGitAvailable && !IsBusy;
+
+    private bool CanCancel() => IsBusy;
 
     // Single-repository commands accept an explicit target (row context
     // menu) and fall back to the selection (toolbar): a null parameter
@@ -196,6 +328,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
         return false;
     }
 
+    /// <summary>
+    /// Cancels the running operation (Task 43). Pending repositories never
+    /// start, the running git.exe is killed where possible, completed rows
+    /// keep their results, and all locks are released via finally blocks.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanCancel))]
+    private void Cancel()
+    {
+        CancelActiveOperation();
+        StatusText = "Cancelling…";
+    }
+
     [RelayCommand(CanExecute = nameof(CanLoad))]
     private async Task LoadAsync(
         CancellationToken cancellationToken)
@@ -210,13 +354,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        var operation = BeginOperation(cancellationToken);
         IsBusy = true;
         StatusText = "Loading repositories…";
 
         try
         {
             var repositories =
-                await _dashboard.LoadAsync(cancellationToken);
+                await _dashboard.LoadAsync(operation.Token);
 
             Repositories.Clear();
 
@@ -241,6 +386,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            EndOperation(operation);
         }
     }
 
@@ -271,13 +417,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        var operation = BeginOperation(cancellationToken);
         IsBusy = true;
         selected.SetActivity(RepositoryActivity.Refreshing, "Refreshing...");
 
         try
         {
             var item = await _dashboard.RefreshAsync(
-                selected.RepositoryId, cancellationToken);
+                selected.RepositoryId, operation.Token);
 
             selected.Update(item);
             MarkCompletedWhenQuiet(selected, "Refreshed");
@@ -297,6 +444,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            EndOperation(operation);
         }
     }
 
@@ -318,13 +466,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        var operation = BeginOperation(cancellationToken);
         IsBusy = true;
         SetAllActivities(RepositoryActivity.Refreshing, "Refreshing...");
 
         try
         {
             var repositories =
-                await _dashboard.RefreshAllAsync(cancellationToken);
+                await _dashboard.RefreshAllAsync(operation.Token);
 
             SyncRows(repositories, "Refreshed");
 
@@ -350,6 +499,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            EndOperation(operation);
         }
     }
 
@@ -380,13 +530,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        var operation = BeginOperation(cancellationToken);
         IsBusy = true;
         selected.SetActivity(RepositoryActivity.Fetching, "Fetching...");
 
         try
         {
             var item = await _dashboard.FetchAsync(
-                selected.RepositoryId, cancellationToken);
+                selected.RepositoryId, operation.Token);
 
             selected.Update(item);
             MarkCompletedWhenQuiet(selected, "Fetched");
@@ -411,12 +562,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            EndOperation(operation);
         }
     }
 
     /// <summary>
     /// Fetches every repository with bounded concurrency. One failure never
     /// aborts the batch; each row shows its own terminal activity inline.
+    /// Cancel stops the queue, kills running git where possible, keeps
+    /// completed rows, and returns the UI to idle with locks released.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanFetchAll))]
     private async Task FetchAllAsync(
@@ -432,16 +586,32 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        var operation = BeginOperation(cancellationToken);
         IsBusy = true;
         SetAllActivities(RepositoryActivity.Fetching, "Fetching...");
 
         try
         {
-            var repositories =
-                await _dashboard.FetchAllAsync(cancellationToken);
+            var batch =
+                await _dashboard.FetchAllAsync(operation.Token);
 
-            SyncRows(repositories, "Fetched");
+            // Completed rows keep their new state even when cancelled;
+            // repositories that never finished stay in-progress here and
+            // are reset to idle below. Rows are never removed: the batch
+            // may be partial.
+            ApplyBatchItems(batch.CompletedItems, "Fetched");
 
+            if (batch.WasCancelled)
+            {
+                ResetInProgressActivities();
+                StatusText = batch.CompletedItems.Count == 0
+                    ? "Fetch cancelled."
+                    : $"Fetch cancelled: {batch.CompletedItems.Count} " +
+                      $"repositories completed before cancel.";
+                return;
+            }
+
+            var repositories = batch.CompletedItems;
             var failedCount = repositories.Count(
                 r => r.FetchError is not null || r.InspectionError is not null);
             var successfulCount = repositories.Count - failedCount;
@@ -467,6 +637,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            EndOperation(operation);
         }
     }
 
@@ -498,13 +669,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        var operation = BeginOperation(cancellationToken);
         IsBusy = true;
         selected.SetActivity(RepositoryActivity.Updating, "Updating...");
 
         try
         {
             var item = await _dashboard.UpdateAsync(
-                selected.RepositoryId, cancellationToken);
+                selected.RepositoryId, operation.Token);
 
             selected.Update(item);
             StatusText = DescribeUpdateOutcome(selected.Name, item);
@@ -523,6 +695,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            EndOperation(operation);
         }
     }
 
@@ -530,6 +703,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// Updates every safe repository with bounded concurrency. Only
     /// fast-forwardable branches are pulled; the rest show their skip
     /// reason inline. One failure never aborts the batch.
+    /// Cancel stops the queue, kills running git where possible, keeps
+    /// completed rows, and returns the UI to idle with locks released.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanUpdateAll))]
     private async Task UpdateAllAsync(
@@ -545,17 +720,28 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        var operation = BeginOperation(cancellationToken);
         IsBusy = true;
         SetAllActivities(RepositoryActivity.Updating, "Updating...");
 
         try
         {
-            var repositories =
-                await _dashboard.UpdateAllAsync(cancellationToken);
+            var batch =
+                await _dashboard.UpdateAllAsync(operation.Token);
 
-            SyncRows(repositories);
+            ApplyBatchItems(batch.CompletedItems);
 
-            StatusText = DescribeUpdateSummary(repositories);
+            if (batch.WasCancelled)
+            {
+                ResetInProgressActivities();
+                StatusText = batch.CompletedItems.Count == 0
+                    ? "Update cancelled."
+                    : $"Update cancelled: {batch.CompletedItems.Count} " +
+                      $"repositories completed before cancel.";
+                return;
+            }
+
+            StatusText = DescribeUpdateSummary(batch.CompletedItems);
         }
         catch (OperationCanceledException)
         {
@@ -570,6 +756,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            EndOperation(operation);
         }
     }
 
@@ -798,11 +985,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        var operation = BeginOperation(cancellationToken);
         IsBusy = true;
 
         try
         {
-            var item = await _dashboard.AddAsync(path, cancellationToken);
+            var item = await _dashboard.AddAsync(path, operation.Token);
 
             var row = new RepositoryRowViewModel(item);
             Repositories.Add(row);
@@ -825,6 +1013,121 @@ public sealed partial class MainWindowViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            EndOperation(operation);
+        }
+    }
+
+    /// <summary>
+    /// Discovers Git repositories under a user-chosen parent folder
+    /// (Task 40, max depth 3, hidden folders skipped, no descent into
+    /// found repositories) and shows them in a checklist. Nothing is
+    /// added until the user confirms with <c>Add Selected</c>.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanDiscover))]
+    private async Task DiscoverAsync(
+        CancellationToken cancellationToken)
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        if (!RequireGit())
+        {
+            return;
+        }
+
+        var root = _folderPicker.PickFolder(
+            "Choose a folder to search for repositories");
+
+        if (root is null)
+        {
+            return;
+        }
+
+        var operation = BeginOperation(cancellationToken);
+        IsBusy = true;
+        StatusText = $"Searching for repositories under '{root}'…";
+
+        try
+        {
+            var found = await _discovery.DiscoverAsync(
+                root, 3, operation.Token);
+
+            if (found.Count == 0)
+            {
+                StatusText = $"No Git repositories found under '{root}'.";
+                return;
+            }
+
+            var alreadyTracked = Repositories
+                .Select(r => r.DetailsPath)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            // Dialog is synchronous UI: run it on the UI thread before any
+            // further awaits so cancellation during the scan (not the dialog)
+            // is what the token governs.
+            var selected = _discoveryDialog.PickRepositoriesToAdd(
+                found, alreadyTracked);
+
+            if (selected is null)
+            {
+                StatusText = "Discovery cancelled.";
+                return;
+            }
+
+            if (selected.Count == 0)
+            {
+                StatusText = "No repositories selected.";
+                return;
+            }
+
+            var added = 0;
+            var failed = 0;
+
+            foreach (var candidate in selected)
+            {
+                operation.Token.ThrowIfCancellationRequested();
+
+                try
+                {
+                    var item = await _dashboard.AddAsync(
+                        candidate, operation.Token);
+                    Repositories.Add(new RepositoryRowViewModel(item));
+                    added++;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    StatusText = $"Could not add '{candidate}': {ex.Message}";
+                }
+            }
+
+            if (Repositories.Count > 0)
+            {
+                SelectedRepository = Repositories[^1];
+            }
+
+            StatusText = failed == 0
+                ? $"Added {added} repositories."
+                : $"Added {added} repositories, {failed} failed.";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Discovery cancelled.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Could not discover repositories: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+            EndOperation(operation);
         }
     }
 
@@ -858,12 +1161,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
+        var operation = BeginOperation(cancellationToken);
         IsBusy = true;
 
         try
         {
             await _dashboard.RemoveAsync(
-                selected.RepositoryId, cancellationToken);
+                selected.RepositoryId, operation.Token);
 
             Repositories.Remove(selected);
             StatusText = $"Removed '{selected.Name}'.";
@@ -879,6 +1183,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         finally
         {
             IsBusy = false;
+            EndOperation(operation);
         }
     }
 
@@ -908,6 +1213,41 @@ public sealed partial class MainWindowViewModel : ObservableObject
         if (row.Activity == RepositoryActivity.Idle)
         {
             row.SetActivity(RepositoryActivity.Completed, completedText);
+        }
+    }
+
+    /// <summary>
+    /// Applies batch items without removing rows: cancelled batches are
+    /// partial by design, and missing rows mean "did not finish", not
+    /// "was removed". Non-completed rows keep their in-progress activity
+    /// so the caller can reset them to idle afterwards.
+    /// </summary>
+    private void ApplyBatchItems(
+        IReadOnlyList<RepositoryDashboardItem> completed,
+        string? batchCompletedText = null)
+    {
+        foreach (var item in completed)
+        {
+            var existing = Repositories.FirstOrDefault(
+                r => r.RepositoryId == item.Configuration.Id);
+
+            RepositoryRowViewModel row;
+
+            if (existing is null)
+            {
+                row = new RepositoryRowViewModel(item);
+                Repositories.Add(row);
+            }
+            else
+            {
+                existing.Update(item);
+                row = existing;
+            }
+
+            if (batchCompletedText is not null)
+            {
+                MarkCompletedWhenQuiet(row, batchCompletedText);
+            }
         }
     }
 

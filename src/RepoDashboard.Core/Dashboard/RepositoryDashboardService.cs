@@ -1,5 +1,9 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using RepoDashboard.Core.Git;
+using RepoDashboard.Core.Lifetime;
 using RepoDashboard.Core.Models;
 using RepoDashboard.Core.Repositories;
 using RepoDashboard.Core.State;
@@ -26,6 +30,7 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
     private readonly IRepositoryFetcher _fetcher;
     private readonly IRepositoryUpdater _updater;
     private readonly IOperationStateStore? _stateStore;
+    private readonly ILogger<RepositoryDashboardService> _logger;
 
     /// <summary>
     /// At most 4 simultaneous Git operations routed through this service.
@@ -78,7 +83,9 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         IUpdateEligibilityClassifier classifier,
         IRepositoryFetcher fetcher,
         IRepositoryUpdater updater,
-        IOperationStateStore? operationStateStore = null)
+        IOperationStateStore? operationStateStore = null,
+        ILogger<RepositoryDashboardService>? logger = null,
+        IApplicationShutdown? applicationShutdown = null)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(inspector);
@@ -91,7 +98,21 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         _fetcher = fetcher;
         _updater = updater;
         _stateStore = operationStateStore;
+        _logger = logger ?? NullLogger<RepositoryDashboardService>.Instance;
+        _shutdownToken = applicationShutdown?.ShutdownToken ?? CancellationToken.None;
     }
+
+    /// <summary>
+    /// Shutdown-only token for post-commit work. When no lifetime is wired
+    /// (unit tests) this is <see cref="CancellationToken.None"/>, preserving
+    /// the previous "ignore user Cancel" behaviour; with a lifetime wired it
+    /// ignores user Cancel yet still aborts on application shutdown.
+    /// </summary>
+    private readonly CancellationToken _shutdownToken;
+
+    private CancellationToken PostCommitToken => _shutdownToken.CanBeCanceled
+        ? _shutdownToken
+        : CancellationToken.None;
 
     public async Task<IReadOnlyList<RepositoryDashboardItem>> LoadAsync(
         CancellationToken cancellationToken)
@@ -230,22 +251,90 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         return await FetchRepositoryAsync(configuration, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<RepositoryDashboardItem>> FetchAllAsync(
+    public async Task<RepositoryBatchResult> FetchAllAsync(
         CancellationToken cancellationToken)
     {
-        await EnsureStateLoadedAsync(cancellationToken);
-        var configurations = await _store.LoadAsync(cancellationToken);
+        IReadOnlyList<RepositoryConfiguration> configurations;
+
+        try
+        {
+            await EnsureStateLoadedAsync(cancellationToken);
+            configurations = await _store.LoadAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Cancelled before any repository started: nothing completed.
+            return RepositoryBatchResult.Cancelled();
+        }
+
+        _logger.LogInformation(
+            "Fetch-all started for {Count} repositories", configurations.Count);
+
+        var stopwatch = Stopwatch.StartNew();
 
         // Start every repository at once; the global semaphore inside
         // FetchRepositoryAsync bounds actual Git parallelism to 4.
-        // Each task isolates its own failures, so Task.WhenAll collects
-        // every result — one repository never aborts the batch — except
-        // for cancellation, which still aborts.
+        // Each task isolates both failures (returned as failed items) and
+        // cancellation (returned as a cancelled marker), so Task.WhenAll
+        // never throws and completed work is never lost when Cancel arrives.
         var tasks = configurations
-            .Select(c => FetchRepositoryAsync(c, cancellationToken))
+            .Select(c => FetchOneGuardedAsync(c, cancellationToken))
             .ToList();
 
-        return await Task.WhenAll(tasks);
+        var outcomes = await Task.WhenAll(tasks);
+
+        var completed = outcomes
+            .Where(o => o.Item is not null)
+            .Select(o => o.Item!)
+            .ToList();
+        var wasCancelled = outcomes.Any(o => o.Cancelled);
+
+        var failed = completed.Count(
+            i => i.FetchError is not null || i.InspectionError is not null);
+
+        stopwatch.Stop();
+
+        if (wasCancelled)
+        {
+            _logger.LogInformation(
+                "Fetch-all cancelled: {Completed} of {Total} repositories completed, "
+                + "{Failed} failed in {DurationSec:F2} sec",
+                completed.Count, configurations.Count, failed,
+                stopwatch.Elapsed.TotalSeconds);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Fetch-all completed: {Total} repositories, {Succeeded} succeeded, "
+                + "{Failed} failed in {DurationSec:F2} sec",
+                completed.Count, completed.Count - failed, failed,
+                stopwatch.Elapsed.TotalSeconds);
+        }
+
+        return new RepositoryBatchResult
+        {
+            CompletedItems = completed,
+            WasCancelled = wasCancelled
+        };
+    }
+
+    /// <summary>
+    /// One guarded fetch: failures are already items, cancellation becomes
+    /// a marker — never an exception that would make WhenAll drop successes.
+    /// Locks/semaphore are released via finally inside FetchRepositoryAsync.
+    /// </summary>
+    private async Task<(RepositoryDashboardItem? Item, bool Cancelled)> FetchOneGuardedAsync(
+        RepositoryConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return (await FetchRepositoryAsync(configuration, cancellationToken), false);
+        }
+        catch (OperationCanceledException)
+        {
+            return (null, true);
+        }
     }
 
     public async Task<RepositoryDashboardItem> UpdateAsync(
@@ -267,21 +356,85 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         return await UpdateRepositoryAsync(configuration, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<RepositoryDashboardItem>> UpdateAllAsync(
+    public async Task<RepositoryBatchResult> UpdateAllAsync(
         CancellationToken cancellationToken)
     {
-        await EnsureStateLoadedAsync(cancellationToken);
-        var configurations = await _store.LoadAsync(cancellationToken);
+        IReadOnlyList<RepositoryConfiguration> configurations;
 
-        // Same pattern as FetchAllAsync: start everything at once, let the
-        // shared global semaphore bound Git parallelism to 4, and collect
-        // every per-repository result. Skips and failures never abort
-        // the batch — only cancellation does.
+        try
+        {
+            await EnsureStateLoadedAsync(cancellationToken);
+            configurations = await _store.LoadAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            return RepositoryBatchResult.Cancelled();
+        }
+
+        _logger.LogInformation(
+            "Update-all started for {Count} repositories", configurations.Count);
+
+        var stopwatch = Stopwatch.StartNew();
+
+        // Same guarded pattern as FetchAllAsync: skips/failures are items,
+        // cancellation is a marker — completed work is never dropped.
         var tasks = configurations
-            .Select(c => UpdateRepositoryAsync(c, cancellationToken))
+            .Select(c => UpdateOneGuardedAsync(c, cancellationToken))
             .ToList();
 
-        return await Task.WhenAll(tasks);
+        var outcomes = await Task.WhenAll(tasks);
+
+        var completed = outcomes
+            .Where(o => o.Item is not null)
+            .Select(o => o.Item!)
+            .ToList();
+        var wasCancelled = outcomes.Any(o => o.Cancelled);
+
+        var updated = completed.Count(
+            i => i.UpdateResult?.Outcome == RepositoryUpdateOutcome.Updated);
+        var failed = completed.Count(
+            i => i.InspectionError is not null
+                || i.FetchError is not null
+                || i.UpdateResult?.Outcome == RepositoryUpdateOutcome.Failed);
+
+        stopwatch.Stop();
+
+        if (wasCancelled)
+        {
+            _logger.LogInformation(
+                "Update-all cancelled: {Completed} of {Total} repositories completed, "
+                + "{Updated} updated, {Failed} failed in {DurationSec:F2} sec",
+                completed.Count, configurations.Count, updated, failed,
+                stopwatch.Elapsed.TotalSeconds);
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Update-all completed: {Total} repositories, {Updated} updated, "
+                + "{Failed} failed in {DurationSec:F2} sec",
+                completed.Count, updated, failed,
+                stopwatch.Elapsed.TotalSeconds);
+        }
+
+        return new RepositoryBatchResult
+        {
+            CompletedItems = completed,
+            WasCancelled = wasCancelled
+        };
+    }
+
+    private async Task<(RepositoryDashboardItem? Item, bool Cancelled)> UpdateOneGuardedAsync(
+        RepositoryConfiguration configuration,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return (await UpdateRepositoryAsync(configuration, cancellationToken), false);
+        }
+        catch (OperationCanceledException)
+        {
+            return (null, true);
+        }
     }
 
     /// <summary>
@@ -400,7 +553,11 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
                 configuration, fetchResult.Message, cancellationToken);
         }
 
-        await RecordFetchSuccessAsync(configuration.Id, cancellationToken);
+        // Advisory timestamp persistence must not honor user cancellation:
+        // the fetch already succeeded, and losing the completed item over a
+        // state-file write would hide completed work. CancellationToken.None
+        // is intentional — the in-memory timestamp is recorded regardless.
+        await RecordFetchSuccessAsync(configuration.Id, CancellationToken.None);
 
         try
         {
@@ -523,9 +680,11 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
 
         // An update always starts with a fetch: a successful one refreshes
         // the last-fetch timestamp exactly like an explicit Fetch does.
+        // Advisory only — never let its cancellation discard an already
+        // completed Git operation (see FetchAndInspectAsync above).
         if (updateResult.FetchResult?.Success == true)
         {
-            await RecordFetchSuccessAsync(configuration.Id, cancellationToken);
+            await RecordFetchSuccessAsync(configuration.Id, CancellationToken.None);
         }
 
         if (updateResult.FinalSnapshot is not null)
@@ -538,9 +697,20 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
                 operation: RepositoryOperationType.Update);
         }
 
+        // The updater committed (Updated) but its final re-inspection failed
+        // (FinalSnapshot null): the fallback must use the same post-commit
+        // shutdown-only token. Using the original (user-cancellable) token
+        // here would let a Cancel pressed after the pull erase the committed
+        // Updated outcome. Shutdown still aborts via the shutdown token.
+        // Non-Updated outcomes stay on the original token: user Cancel and
+        // shutdown both abort them as before.
+        var fallbackToken = updateResult.Outcome == RepositoryUpdateOutcome.Updated
+            ? PostCommitToken
+            : cancellationToken;
+
         return await InspectWithUpdateFailureAsync(
             configuration,
-            cancellationToken,
+            fallbackToken,
             updateResult);
     }
 
@@ -555,7 +725,9 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
                 configuration, cancellationToken);
 
             // The update outcome is preserved on the item even though the
-            // snapshot comes from this fallback inspection.
+            // snapshot comes from this fallback inspection — including
+            // Updated with a fresh snapshot when the updater's own final
+            // re-inspection failed.
             return CreateItem(
                 configuration, snapshot,
                 updateResult: updateResult,
@@ -563,11 +735,16 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         }
         catch (OperationCanceledException)
         {
+            // Cancellation (user Cancel pre-commit, or shutdown at any time)
+            // still aborts: the guarded batch converts this into a cancelled
+            // marker. For Updated this can only be shutdown, because the
+            // fallback token ignores user Cancel.
             throw;
         }
         catch (Exception ex)
         {
-            // The update outcome stays on the item via UpdateResult;
+            // The update outcome stays on the item via UpdateResult (so an
+            // Updated outcome survives a failed fallback inspection);
             // only the inspection error goes here.
             return CreateFailedItem(
                 configuration, ex.Message,
@@ -580,6 +757,8 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
     /// Builds a failed item without running the classifier: the snapshot
     /// carries only identity (id + path) because its Git state is unknown,
     /// and the decision is <c>Unknown</c> with the raw error message.
+    /// The friendly hint (Task 42) is resolved from the update result first,
+    /// then from the raw error texts — raw output is always preserved.
     /// </summary>
     private RepositoryDashboardItem CreateFailedItem(
         RepositoryConfiguration configuration,
@@ -602,6 +781,11 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
             FetchError = fetchError,
             UpdateResult = updateResult,
             LastOperation = operation,
+            FriendlyHint = ResolveHint(
+                updateResult?.FriendlyHint,
+                updateResult?.FetchResult?.FriendlyHint,
+                fetchError,
+                errorMessage),
             LastSuccessfulFetch = GetLastSuccessfulFetch(configuration.Id)
         };
 
@@ -619,8 +803,68 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
             FetchError = fetchError,
             UpdateResult = updateResult,
             LastOperation = operation,
+            FriendlyHint = ResolveHint(
+                updateResult?.FriendlyHint,
+                updateResult?.FetchResult?.FriendlyHint,
+                fetchError,
+                updateResult?.Outcome == RepositoryUpdateOutcome.Failed
+                    ? updateResult.Message
+                    : null),
             LastSuccessfulFetch = GetLastSuccessfulFetch(configuration.Id)
         };
+
+    /// <summary>
+    /// Prefers hints already classified at the operation site; falls back
+    /// to classifying raw error text so older call paths still get hints.
+    /// Returns null when nothing matches — unknown errors show raw only.
+    /// </summary>
+    private static string? ResolveHint(params string?[] candidates)
+    {
+        foreach (var candidate in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            // Already a friendly hint (from fetcher/updater): return the
+            // clean hint, not the combined "hint + raw" message.
+            var known = ExtractKnownHint(candidate);
+
+            if (known is not null)
+            {
+                return known;
+            }
+
+            var hint = GitErrorClassifier.GetFriendlyHint(candidate);
+
+            if (hint is not null)
+            {
+                return hint;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ExtractKnownHint(string candidate)
+    {
+        foreach (var kind in (GitFailureKind[])[
+            GitFailureKind.Authentication,
+            GitFailureKind.NetworkUnreachable,
+            GitFailureKind.RemoteNotFound])
+        {
+            var hint = GitErrorClassifier.GetHint(kind);
+
+            if (candidate.Equals(hint, StringComparison.Ordinal)
+                || candidate.StartsWith(hint, StringComparison.Ordinal))
+            {
+                return hint;
+            }
+        }
+
+        return null;
+    }
 
     private DateTimeOffset? GetLastSuccessfulFetch(Guid repositoryId) =>
         _lastSuccessfulFetch.TryGetValue(repositoryId, out var fetchedAt)

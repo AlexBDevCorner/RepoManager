@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using FluentAssertions;
 using RepoDashboard.Core.Git;
+using RepoDashboard.Core.Lifetime;
 using RepoDashboard.Infrastructure.Git;
 
 namespace RepoDashboard.IntegrationTests.Git;
@@ -101,6 +102,32 @@ public sealed class GitCommandRunnerTests : IDisposable
         var act = () => executeTask;
 
         // Assert: cancellation propagates and the daemon is gone.
+        await act.Should().ThrowAsync<OperationCanceledException>();
+        await WaitForPortStateAsync(port, open: false, TestTimeout);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Shutdown_KillsGitProcessEvenWhenCallerIgnoresCancel()
+    {
+        // Defense-in-depth: post-commit work passes a shutdown-only token
+        // (or None in tests without a lifetime). The runner must still kill
+        // the process on shutdown — CancellationToken.None must never
+        // bypass Task 44.
+        var port = GetFreeTcpPort();
+
+        using var shutdown = new ApplicationShutdown();
+        IGitCommandRunner shutdownRunner = new GitCommandRunner(applicationShutdown: shutdown);
+
+        var executeTask = shutdownRunner.ExecuteAsync(
+            _workingDirectory,
+            ["daemon", "--reuseaddr", $"--port={port}", "--export-all", $"--base-path={_workingDirectory}"],
+            CancellationToken.None);
+
+        await WaitForPortStateAsync(port, open: true, TestTimeout);
+        shutdown.NotifyShuttingDown();
+
+        var act = () => executeTask;
+
         await act.Should().ThrowAsync<OperationCanceledException>();
         await WaitForPortStateAsync(port, open: false, TestTimeout);
     }

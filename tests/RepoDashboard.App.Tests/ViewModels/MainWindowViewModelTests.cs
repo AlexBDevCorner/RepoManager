@@ -87,12 +87,11 @@ public sealed class MainWindowViewModelTests
             return Task.FromResult(_items.First(i => i.Configuration.Id == repositoryId));
         }
 
-        public Task<IReadOnlyList<RepositoryDashboardItem>> FetchAllAsync(
+        public Task<RepositoryBatchResult> FetchAllAsync(
             CancellationToken cancellationToken)
         {
             ThrowIfStrict();
-            return Task.FromResult<IReadOnlyList<RepositoryDashboardItem>>(
-                _items.ToList());
+            return Task.FromResult(RepositoryBatchResult.Completed(_items.ToList()));
         }
 
         public Task<RepositoryDashboardItem> UpdateAsync(
@@ -103,12 +102,11 @@ public sealed class MainWindowViewModelTests
             return Task.FromResult(_items.First(i => i.Configuration.Id == repositoryId));
         }
 
-        public Task<IReadOnlyList<RepositoryDashboardItem>> UpdateAllAsync(
+        public Task<RepositoryBatchResult> UpdateAllAsync(
             CancellationToken cancellationToken)
         {
             ThrowIfStrict();
-            return Task.FromResult<IReadOnlyList<RepositoryDashboardItem>>(
-                _items.ToList());
+            return Task.FromResult(RepositoryBatchResult.Completed(_items.ToList()));
         }
 
         public Task<RepositoryDashboardItem> AddAsync(

@@ -48,5 +48,13 @@ public sealed record RepositoryDashboardItem
     /// </summary>
     public RepositoryOperationType? LastOperation { get; init; }
 
+    /// <summary>
+    /// Friendly hint for the current error (Task 42), or null when there
+    /// is no error or the error matches no known pattern. The raw
+    /// diagnostics stay in <c>FetchError</c>/<c>InspectionError</c>/
+    /// <c>UpdateResult.Message</c> — this is guidance alongside them.
+    /// </summary>
+    public string? FriendlyHint { get; init; }
+
     public DateTimeOffset? LastSuccessfulFetch { get; init; }
 }

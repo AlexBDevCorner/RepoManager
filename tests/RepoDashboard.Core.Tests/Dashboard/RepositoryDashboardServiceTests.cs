@@ -518,7 +518,9 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
             });
         var sut = CreateSut(store, inspector, fetcher);
 
-        var items = await sut.FetchAllAsync(CancellationToken.None);
+        var batch = await sut.FetchAllAsync(CancellationToken.None);
+        batch.WasCancelled.Should().BeFalse();
+        var items = batch.CompletedItems;
 
         items.Should().HaveCount(3);
         fetcher.Calls.Should().Be(3);
@@ -548,7 +550,9 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
             new StubInspector(UpToDateSnapshot),
             fetcher);
 
-        var items = await sut.FetchAllAsync(CancellationToken.None);
+        var batch = await sut.FetchAllAsync(CancellationToken.None);
+        batch.WasCancelled.Should().BeFalse();
+        var items = batch.CompletedItems;
 
         items.Should().BeEmpty();
         fetcher.Calls.Should().Be(0);
@@ -707,7 +711,9 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
             new StubInspector(UpToDateSnapshot),
             fetcher);
 
-        var items = await sut.FetchAllAsync(CancellationToken.None);
+        var batch = await sut.FetchAllAsync(CancellationToken.None);
+        batch.WasCancelled.Should().BeFalse();
+        var items = batch.CompletedItems;
 
         items.Should().HaveCount(10);
         items.Should().OnlyContain(i => i.FetchError == null);
@@ -747,7 +753,9 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
             new StubInspector(UpToDateSnapshot),
             fetcher);
 
-        var items = await sut.FetchAllAsync(CancellationToken.None);
+        var batch = await sut.FetchAllAsync(CancellationToken.None);
+        batch.WasCancelled.Should().BeFalse();
+        var items = batch.CompletedItems;
 
         items.Should().HaveCount(4);
         fetcher.MaxConcurrent.Should().BeInRange(2, 4);
@@ -939,7 +947,9 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
         });
         var sut = CreateSut(store, inspector, updater: updater);
 
-        var items = await sut.UpdateAllAsync(CancellationToken.None);
+        var batch = await sut.UpdateAllAsync(CancellationToken.None);
+        batch.WasCancelled.Should().BeFalse();
+        var items = batch.CompletedItems;
 
         items.Should().HaveCount(3);
         updater.Calls.Should().Be(3);
@@ -972,7 +982,9 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
             new StubInspector(UpToDateSnapshot),
             updater: updater);
 
-        var items = await sut.UpdateAllAsync(CancellationToken.None);
+        var batch = await sut.UpdateAllAsync(CancellationToken.None);
+        batch.WasCancelled.Should().BeFalse();
+        var items = batch.CompletedItems;
 
         items.Should().BeEmpty();
         updater.Calls.Should().Be(0);
@@ -1017,7 +1029,9 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
             new StubInspector(UpToDateSnapshot),
             updater: updater);
 
-        var items = await sut.UpdateAllAsync(CancellationToken.None);
+        var batch = await sut.UpdateAllAsync(CancellationToken.None);
+        batch.WasCancelled.Should().BeFalse();
+        var items = batch.CompletedItems;
 
         items.Should().HaveCount(10);
         items.Should().OnlyContain(

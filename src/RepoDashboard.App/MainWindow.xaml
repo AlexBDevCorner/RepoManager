@@ -14,6 +14,9 @@
             <Button Content="+ Add Repository"
                     Command="{Binding AddCommand}"
                     Margin="4,0" />
+            <Button Content="Discover Repositories..."
+                    Command="{Binding DiscoverCommand}"
+                    Margin="4,0" />
             <Separator />
             <Button Content="Remove from dashboard"
                     Command="{Binding RemoveCommand}"
@@ -38,6 +41,10 @@
                     Margin="4,0" />
             <Button Content="Update Safe Repositories"
                     Command="{Binding UpdateAllCommand}"
+                    Margin="4,0" />
+            <Separator />
+            <Button Content="Cancel"
+                    Command="{Binding CancelCommand}"
                     Margin="4,0" />
             <Separator />
             <Button Content="Open Folder"
@@ -82,6 +89,7 @@
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
@@ -157,9 +165,16 @@
                                TextWrapping="Wrap" Margin="0,0,0,2" />
 
                     <TextBlock Grid.Row="7" Grid.Column="0"
-                               Text="Git error"
+                               Text="Hint"
                                Opacity="0.7" Margin="0,0,8,2" />
                     <TextBlock Grid.Row="7" Grid.Column="1" Grid.ColumnSpan="3"
+                               Text="{Binding DetailsGitHint}"
+                               TextWrapping="Wrap" Margin="0,0,0,2" />
+
+                    <TextBlock Grid.Row="8" Grid.Column="0"
+                               Text="Git error"
+                               Opacity="0.7" Margin="0,0,8,2" />
+                    <TextBlock Grid.Row="8" Grid.Column="1" Grid.ColumnSpan="3"
                                Text="{Binding DetailsGitError}"
                                TextWrapping="Wrap" Margin="0,0,0,2" />
                 </Grid>
