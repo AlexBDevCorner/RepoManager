@@ -232,6 +232,92 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         await ForgetFetchStateAsync(repositoryId, cancellationToken);
     }
 
+    /// <summary>
+    /// Renames the persisted display name (Task 49). Only
+    /// <see cref="RepositoryConfiguration.Name"/> changes — id, path,
+    /// position and Git state are untouched, and Git is never inspected.
+    /// </summary>
+    public async Task<RepositoryConfiguration> RenameAsync(
+        Guid repositoryId,
+        string name,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            throw new ArgumentException(
+                "Repository name must not be empty.", nameof(name));
+        }
+
+        var normalizedName = name.Trim();
+
+        var configurations =
+            (await _store.LoadAsync(cancellationToken)).ToList();
+
+        var index = configurations.FindIndex(
+            c => c.Id == repositoryId);
+
+        if (index < 0)
+        {
+            throw new KeyNotFoundException(
+                $"Repository '{repositoryId}' is not on the dashboard.");
+        }
+
+        var updated = configurations[index] with
+        {
+            Name = normalizedName
+        };
+
+        configurations[index] = updated;
+
+        await _store.SaveAsync(
+            configurations,
+            cancellationToken);
+
+        return updated;
+    }
+
+    /// <summary>
+    /// Reorders configuration (Task 50). The list position inside
+    /// <c>repositories.json</c> is the persisted dashboard order.
+    /// Moving to the current position is a no-op and saves nothing.
+    /// </summary>
+    public async Task MoveAsync(
+        Guid repositoryId,
+        int newIndex,
+        CancellationToken cancellationToken)
+    {
+        var configurations =
+            (await _store.LoadAsync(cancellationToken)).ToList();
+
+        var currentIndex = configurations.FindIndex(
+            c => c.Id == repositoryId);
+
+        if (currentIndex < 0)
+        {
+            throw new KeyNotFoundException(
+                $"Repository '{repositoryId}' is not on the dashboard.");
+        }
+
+        if (newIndex < 0 || newIndex >= configurations.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(newIndex));
+        }
+
+        if (currentIndex == newIndex)
+        {
+            return;
+        }
+
+        var configuration = configurations[currentIndex];
+
+        configurations.RemoveAt(currentIndex);
+        configurations.Insert(newIndex, configuration);
+
+        await _store.SaveAsync(
+            configurations,
+            cancellationToken);
+    }
+
     public async Task<RepositoryDashboardItem> FetchAsync(
         Guid repositoryId,
         CancellationToken cancellationToken)

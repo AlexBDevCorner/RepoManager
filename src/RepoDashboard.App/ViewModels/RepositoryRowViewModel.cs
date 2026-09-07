@@ -146,6 +146,17 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Applies a user-chosen display name (Task 49 alias). Only the
+    /// presentation name changes — id, path and Git state are untouched.
+    /// </summary>
+    public void SetName(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        Name = name.Trim();
+    }
+
+    /// <summary>
     /// Drives the transient in-progress state while an operation runs
     /// (for example "Fetching..."). The next <see cref="Update"/> call
     /// replaces it with the terminal state derived from the fresh item.

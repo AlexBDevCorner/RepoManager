@@ -18,6 +18,15 @@
                     Command="{Binding DiscoverCommand}"
                     Margin="4,0" />
             <Separator />
+            <Button Content="Rename"
+                    Command="{Binding RenameCommand}"
+                    Margin="4,0" />
+            <Button Content="Move Up"
+                    Command="{Binding MoveUpCommand}"
+                    Margin="4,0" />
+            <Button Content="Move Down"
+                    Command="{Binding MoveDownCommand}"
+                    Margin="4,0" />
             <Button Content="Remove from dashboard"
                     Command="{Binding RemoveCommand}"
                     Margin="4,0" />
@@ -231,6 +240,22 @@
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <MenuItem Header="Copy Path"
                                           Command="{Binding PlacementTarget.Tag.CopyPathCommand,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.DataContext,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <Separator />
+                                <MenuItem Header="Rename..."
+                                          Command="{Binding PlacementTarget.Tag.RenameCommand,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.DataContext,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="Move Up"
+                                          Command="{Binding PlacementTarget.Tag.MoveUpCommand,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.DataContext,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="Move Down"
+                                          Command="{Binding PlacementTarget.Tag.MoveDownCommand,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                           CommandParameter="{Binding PlacementTarget.DataContext,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}" />

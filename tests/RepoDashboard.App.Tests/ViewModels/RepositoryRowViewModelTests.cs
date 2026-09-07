@@ -434,4 +434,32 @@ public sealed class RepositoryRowViewModelTests
         row.WorktreeStatus.Should().Be("Dirty");
         row.UpdateStatus.Should().Be(nameof(UpdateEligibility.Dirty));
     }
+
+    [Fact]
+    public void SetName_updates_displayed_name_only()
+    {
+        var row = new RepositoryRowViewModel(Item(name: "Store"));
+        var idBefore = row.RepositoryId;
+        var pathBefore = row.DetailsPath;
+
+        row.SetName("Fantasy Bot");
+
+        row.Name.Should().Be("Fantasy Bot");
+        row.RepositoryId.Should().Be(idBefore);
+        row.DetailsPath.Should().Be(pathBefore);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    public void SetName_rejects_empty_names(string name)
+    {
+        var row = new RepositoryRowViewModel(Item(name: "Store"));
+
+        var act = () => row.SetName(name);
+
+        act.Should().Throw<ArgumentException>();
+        row.Name.Should().Be("Store");
+    }
 }

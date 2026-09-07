@@ -1278,4 +1278,178 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
 
         state.Saved.Should().NotContainKey(configuration.Id);
     }
+
+    [Fact]
+    public async Task RenameAsync_UpdatesOnlyNamePreservingPositionAndFields()
+    {
+        var first = Config("Store", """C:\Source\Repos\Store""") with
+        {
+            PreferredRemote = "upstream",
+            Enabled = false
+        };
+        var second = Config("Legacy", """C:\Source\Repos\Legacy""");
+        var store = new InMemoryStore([first, second]);
+        var inspector = new StubInspector(UpToDateSnapshot);
+        var sut = CreateSut(store, inspector);
+
+        var updated = await sut.RenameAsync(
+            second.Id, "Fantasy Bot", CancellationToken.None);
+
+        updated.Name.Should().Be("Fantasy Bot");
+        updated.Id.Should().Be(second.Id);
+        updated.Path.Should().Be(second.Path);
+        updated.PreferredRemote.Should().Be(second.PreferredRemote);
+        updated.Enabled.Should().Be(second.Enabled);
+
+        var reloaded = await store.LoadAsync(CancellationToken.None);
+        reloaded.Select(c => c.Name).Should().Equal("Store", "Fantasy Bot");
+        reloaded[1].Should().Be(updated);
+        inspector.Calls.Should().Be(
+            0, "renaming is configuration-only and must never inspect Git");
+    }
+
+    [Fact]
+    public async Task RenameAsync_UnknownId_ThrowsKeyNotFound()
+    {
+        var store = new InMemoryStore([Config()]);
+        var sut = CreateSut(store, new StubInspector(UpToDateSnapshot));
+
+        var act = () => sut.RenameAsync(
+            Guid.NewGuid(), "Store", CancellationToken.None);
+
+        await act.Should().ThrowAsync<KeyNotFoundException>();
+        store.SaveCalls.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    public async Task RenameAsync_EmptyName_ThrowsAndPersistsNothing(string name)
+    {
+        var configuration = Config("Store");
+        var store = new InMemoryStore([configuration]);
+        var sut = CreateSut(store, new StubInspector(UpToDateSnapshot));
+
+        var act = () => sut.RenameAsync(
+            configuration.Id, name, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentException>();
+        (await store.LoadAsync(CancellationToken.None))
+            .Should().ContainSingle()
+            .Which.Name.Should().Be("Store");
+        store.SaveCalls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task RenameAsync_TrimsSurroundingWhitespace()
+    {
+        var configuration = Config("Store");
+        var store = new InMemoryStore([configuration]);
+        var sut = CreateSut(store, new StubInspector(UpToDateSnapshot));
+
+        var updated = await sut.RenameAsync(
+            configuration.Id, "   Store   ", CancellationToken.None);
+
+        updated.Name.Should().Be("Store");
+    }
+
+    [Fact]
+    public async Task RenameAsync_DuplicateAliasesAreAllowed()
+    {
+        var first = Config("First", """C:\Source\Repos\First""");
+        var second = Config("Second", """C:\Source\Repos\Second""");
+        var store = new InMemoryStore([first, second]);
+        var sut = CreateSut(store, new StubInspector(UpToDateSnapshot));
+
+        await sut.RenameAsync(first.Id, "Store", CancellationToken.None);
+        var updated = await sut.RenameAsync(
+            second.Id, "Store", CancellationToken.None);
+
+        updated.Name.Should().Be("Store");
+        (await store.LoadAsync(CancellationToken.None))
+            .Select(c => c.Name).Should().Equal("Store", "Store");
+    }
+
+    private static RepositoryConfiguration OrderedConfig(string name) =>
+        Config(name, $"""C:\Source\Repos\{name}""");
+
+    [Fact]
+    public async Task MoveAsync_MovesUpward()
+    {
+        var store = new InMemoryStore(
+            [OrderedConfig("A"), OrderedConfig("B"), OrderedConfig("C")]);
+        var inspector = new StubInspector(UpToDateSnapshot);
+        var sut = CreateSut(store, inspector);
+        var id = (await store.LoadAsync(CancellationToken.None))[2].Id;
+
+        await sut.MoveAsync(id, 0, CancellationToken.None);
+
+        (await store.LoadAsync(CancellationToken.None))
+            .Select(c => c.Name).Should().Equal("C", "A", "B");
+        inspector.Calls.Should().Be(
+            0, "moving is configuration-only and must never inspect Git");
+    }
+
+    [Fact]
+    public async Task MoveAsync_MovesDownward()
+    {
+        var store = new InMemoryStore(
+            [OrderedConfig("A"), OrderedConfig("B"), OrderedConfig("C")]);
+        var sut = CreateSut(store, new StubInspector(UpToDateSnapshot));
+        var id = (await store.LoadAsync(CancellationToken.None))[0].Id;
+
+        await sut.MoveAsync(id, 2, CancellationToken.None);
+
+        (await store.LoadAsync(CancellationToken.None))
+            .Select(c => c.Name).Should().Equal("B", "C", "A");
+    }
+
+    [Fact]
+    public async Task MoveAsync_SamePosition_SucceedsWithoutSaving()
+    {
+        var store = new InMemoryStore(
+            [OrderedConfig("A"), OrderedConfig("B"), OrderedConfig("C")]);
+        var sut = CreateSut(store, new StubInspector(UpToDateSnapshot));
+        var id = (await store.LoadAsync(CancellationToken.None))[1].Id;
+
+        await sut.MoveAsync(id, 1, CancellationToken.None);
+
+        (await store.LoadAsync(CancellationToken.None))
+            .Select(c => c.Name).Should().Equal("A", "B", "C");
+        store.SaveCalls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task MoveAsync_UnknownId_ThrowsKeyNotFound()
+    {
+        var store = new InMemoryStore(
+            [OrderedConfig("A"), OrderedConfig("B")]);
+        var sut = CreateSut(store, new StubInspector(UpToDateSnapshot));
+
+        var act = () => sut.MoveAsync(
+            Guid.NewGuid(), 0, CancellationToken.None);
+
+        await act.Should().ThrowAsync<KeyNotFoundException>();
+        store.SaveCalls.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public async Task MoveAsync_InvalidIndex_ThrowsAndLeavesOrderUnchanged(int newIndex)
+    {
+        var store = new InMemoryStore(
+            [OrderedConfig("A"), OrderedConfig("B"), OrderedConfig("C")]);
+        var sut = CreateSut(store, new StubInspector(UpToDateSnapshot));
+        var id = (await store.LoadAsync(CancellationToken.None))[0].Id;
+
+        var act = () => sut.MoveAsync(id, newIndex, CancellationToken.None);
+
+        await act.Should().ThrowAsync<ArgumentOutOfRangeException>();
+        (await store.LoadAsync(CancellationToken.None))
+            .Select(c => c.Name).Should().Equal("A", "B", "C");
+        store.SaveCalls.Should().Be(0);
+    }
 }

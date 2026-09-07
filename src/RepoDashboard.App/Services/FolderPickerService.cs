@@ -16,4 +16,20 @@ public sealed class FolderPickerService : IFolderPickerService
             ? dialog.FolderName
             : null;
     }
+
+    public IReadOnlyList<string>? PickFolders(string title)
+    {
+        var dialog = new OpenFolderDialog
+        {
+            Title = title,
+            Multiselect = true
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return null;
+        }
+
+        return dialog.FolderNames;
+    }
 }

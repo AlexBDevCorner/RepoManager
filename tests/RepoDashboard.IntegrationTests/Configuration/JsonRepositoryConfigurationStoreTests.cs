@@ -155,6 +155,78 @@ public sealed class JsonRepositoryConfigurationStoreTests
         reloaded.Should().HaveCount(1);
     }
 
+    [Fact]
+    public async Task SaveThenLoad_PreservesCustomOrder()
+    {
+        // Arrange: array order is the persisted dashboard order (Task 50).
+        var filePath = TemporaryFilePath();
+        var store = new JsonRepositoryConfigurationStore(filePath);
+
+        var repositories = new[]
+        {
+            new RepositoryConfiguration
+            {
+                Id = Guid.NewGuid(),
+                Name = "C",
+                Path = """C:\Source\Repos\C"""
+            },
+            new RepositoryConfiguration
+            {
+                Id = Guid.NewGuid(),
+                Name = "A",
+                Path = """C:\Source\Repos\A"""
+            },
+            new RepositoryConfiguration
+            {
+                Id = Guid.NewGuid(),
+                Name = "B",
+                Path = """C:\Source\Repos\B"""
+            }
+        };
+
+        // Act
+        await store.SaveAsync(repositories, CancellationToken.None);
+
+        var reloaded = await new JsonRepositoryConfigurationStore(filePath)
+            .LoadAsync(CancellationToken.None);
+
+        // Assert: order survives the round trip, not just the set.
+        reloaded.Select(r => r.Name).Should().Equal("C", "A", "B");
+        reloaded.Select(r => r.Id).Should().Equal(
+            repositories.Select(r => r.Id));
+    }
+
+    [Fact]
+    public async Task SaveThenLoad_PreservesCustomAlias()
+    {
+        // Arrange: the display name may differ from the folder name (Task 49).
+        var filePath = TemporaryFilePath();
+        var store = new JsonRepositoryConfigurationStore(filePath);
+
+        var repositories = new[]
+        {
+            new RepositoryConfiguration
+            {
+                Id = Guid.NewGuid(),
+                Name = "Store",
+                Path = """C:\Source\Repos\StandardsDigital.Store.Web"""
+            }
+        };
+
+        // Act
+        await store.SaveAsync(repositories, CancellationToken.None);
+
+        var reloaded = await new JsonRepositoryConfigurationStore(filePath)
+            .LoadAsync(CancellationToken.None);
+
+        // Assert: the alias survives restart while the path is untouched.
+        reloaded.Should().ContainSingle();
+        reloaded[0].Name.Should().Be("Store");
+        reloaded[0].Path.Should().Be(
+            """C:\Source\Repos\StandardsDigital.Store.Web""");
+        reloaded[0].Id.Should().Be(repositories[0].Id);
+    }
+
     private static string TemporaryFilePath() =>
         Path.Combine(
             Path.GetTempPath(),

@@ -32,6 +32,14 @@ public sealed class MainWindowViewModelTests
 
         public int AddCalls { get; private set; }
 
+        public int RenameCalls { get; private set; }
+
+        public int MoveCalls { get; private set; }
+
+        public bool FailRename { get; set; }
+
+        public bool FailMove { get; set; }
+
         /// <summary>
         /// When true, every method throws: proves the ViewModel never
         /// reaches the dashboard (for example when Git is unavailable).
@@ -122,11 +130,87 @@ public sealed class MainWindowViewModelTests
             Guid repositoryId,
             CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+
+        public Task<RepositoryConfiguration> RenameAsync(
+            Guid repositoryId,
+            string name,
+            CancellationToken cancellationToken)
+        {
+            ThrowIfStrict();
+            RenameCalls++;
+
+            if (FailRename)
+            {
+                throw new InvalidOperationException("rename boom");
+            }
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                throw new ArgumentException(
+                    "Repository name must not be empty.", nameof(name));
+            }
+
+            var item = _items.First(i => i.Configuration.Id == repositoryId);
+            var updated = item.Configuration with { Name = name.Trim() };
+            _items[_items.IndexOf(item)] = item with { Configuration = updated };
+            return Task.FromResult(updated);
+        }
+
+        public Task MoveAsync(
+            Guid repositoryId,
+            int newIndex,
+            CancellationToken cancellationToken)
+        {
+            ThrowIfStrict();
+            MoveCalls++;
+
+            if (FailMove)
+            {
+                throw new InvalidOperationException("move boom");
+            }
+
+            var current = _items.FindIndex(
+                i => i.Configuration.Id == repositoryId);
+
+            if (current < 0)
+            {
+                throw new KeyNotFoundException(
+                    $"Repository '{repositoryId}' is not on the dashboard.");
+            }
+
+            if (newIndex < 0 || newIndex >= _items.Count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(newIndex));
+            }
+
+            if (current == newIndex)
+            {
+                return Task.CompletedTask;
+            }
+
+            var item = _items[current];
+            _items.RemoveAt(current);
+            _items.Insert(newIndex, item);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class CancelledPicker : IFolderPickerService
     {
         public string? PickFolder(string title) => null;
+
+        public IReadOnlyList<string>? PickFolders(string title) => null;
+    }
+
+    private sealed class FixedNameDialog(string? name) : IRepositoryNameDialogService
+    {
+        public int Calls { get; private set; }
+
+        public string? RequestName(string currentName, string repositoryPath)
+        {
+            Calls++;
+            return name;
+        }
     }
 
     private static RepositoryDashboardItem Item(string name)
@@ -495,5 +579,110 @@ public sealed class MainWindowViewModelTests
         sut.Repositories[1].Explanation
             .Should().Contain("git status unexpectedly failed");
         sut.SelectedRepository.Should().Be(sut.Repositories[0]);
+    }
+
+    [Fact]
+    public async Task Rename_updates_selected_row_and_reports_status()
+    {
+        var dashboard = new FakeDashboard([Item("Store")]);
+        var dialog = new FixedNameDialog("Fantasy Bot");
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker(),
+            repositoryNameDialog: dialog);
+        await sut.InitializeAsync();
+        sut.SelectedRepository = sut.Repositories[0];
+
+        await sut.RenameCommand.ExecuteAsync(null);
+
+        sut.Repositories[0].Name.Should().Be("Fantasy Bot");
+        sut.StatusText.Should().Be("Renamed repository to 'Fantasy Bot'.");
+        dashboard.RenameCalls.Should().Be(1);
+        dialog.Calls.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Rename_context_menu_target_overrides_selection()
+    {
+        var dashboard = new FakeDashboard([Item("Store"), Item("Legacy")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker(),
+            repositoryNameDialog: new FixedNameDialog("Renamed"));
+        await sut.InitializeAsync();
+        sut.SelectedRepository = sut.Repositories[0];
+        var target = sut.Repositories[1];
+
+        await sut.RenameCommand.ExecuteAsync(target);
+
+        sut.Repositories[0].Name.Should().Be("Store");
+        target.Name.Should().Be("Renamed");
+        sut.SelectedRepository.Should().Be(sut.Repositories[0]);
+    }
+
+    [Fact]
+    public async Task Rename_cancelled_in_dialog_leaves_repository_unchanged()
+    {
+        var dashboard = new FakeDashboard([Item("Store")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker(),
+            repositoryNameDialog: new FixedNameDialog(null));
+        await sut.InitializeAsync();
+        sut.SelectedRepository = sut.Repositories[0];
+
+        await sut.RenameCommand.ExecuteAsync(null);
+
+        sut.Repositories[0].Name.Should().Be("Store");
+        dashboard.RenameCalls.Should().Be(0);
+        sut.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Rename_failure_leaves_displayed_name_unchanged()
+    {
+        var dashboard = new FakeDashboard([Item("Store")]) { FailRename = true };
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker(),
+            repositoryNameDialog: new FixedNameDialog("Broken"));
+        await sut.InitializeAsync();
+        sut.SelectedRepository = sut.Repositories[0];
+
+        await sut.RenameCommand.ExecuteAsync(null);
+
+        sut.Repositories[0].Name.Should().Be("Store");
+        sut.StatusText.Should().Contain("Could not rename 'Store'");
+        sut.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Rename_requires_selection_and_no_running_operation()
+    {
+        var dashboard = new FakeDashboard([Item("Store")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker(),
+            repositoryNameDialog: new FixedNameDialog("Renamed"));
+        await sut.InitializeAsync();
+
+        sut.RenameCommand.CanExecute(null).Should().BeFalse();
+
+        sut.SelectedRepository = sut.Repositories[0];
+        sut.RenameCommand.CanExecute(null).Should().BeTrue();
+
+        sut.IsBusy = true;
+        sut.RenameCommand.CanExecute(null).Should().BeFalse();
+        sut.RenameCommand.CanExecute(sut.Repositories[0]).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Rename_stays_available_without_git_like_remove()
+    {
+        var dashboard = new FakeDashboard([Item("Store")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(available: false),
+            dashboard,
+            new CancelledPicker(),
+            repositoryNameDialog: new FixedNameDialog("Renamed"));
+        await sut.InitializeAsync();
+        sut.SelectedRepository = new RepositoryRowViewModel(Item("Store"));
+
+        sut.RenameCommand.CanExecute(null).Should().BeTrue();
     }
 }
