@@ -244,14 +244,65 @@ public sealed partial class MainWindowViewModel : ObservableObject
             : info.Error ?? "Git status unknown.";
 
         // Without git.exe every inspection would fail with obscure process
-        // errors, so stop here with one clear status instead.
+        // errors. Still load the persisted configurations as placeholder
+        // rows (Tasks 49–50): rename, remove and reorder are
+        // configuration-only and stay usable without Git.
         if (!IsGitAvailable)
         {
-            StatusText = "Repository inspection is unavailable until Git is installed.";
+            await LoadConfigurationRowsAsync(cancellationToken);
             return;
         }
 
         await LoadAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Loads persisted configurations as inspection-free placeholder rows
+    /// when Git is unavailable. No Git process is ever started here.
+    /// </summary>
+    private async Task LoadConfigurationRowsAsync(
+        CancellationToken cancellationToken)
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        var operation = BeginOperation(cancellationToken);
+        IsBusy = true;
+
+        try
+        {
+            var configurations = await _dashboard.LoadConfigurationsAsync(
+                operation.Token);
+
+            Repositories.Clear();
+
+            foreach (var configuration in configurations)
+            {
+                Repositories.Add(
+                    RepositoryRowViewModel.FromConfiguration(configuration));
+            }
+
+            NotifyOrderingCommands();
+
+            StatusText = Repositories.Count == 0
+                ? "No repositories yet. Git operations are unavailable until Git is installed."
+                : $"Loaded {Repositories.Count} repositories. Git operations are unavailable until Git is installed.";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Loading cancelled.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Could not load repositories: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+            EndOperation(operation);
+        }
     }
 
     private bool CanLoad() => IsGitAvailable && !IsBusy;

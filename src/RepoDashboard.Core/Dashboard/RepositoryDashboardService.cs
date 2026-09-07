@@ -123,6 +123,16 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
         return await InspectAllAsync(configurations, cancellationToken);
     }
 
+    /// <summary>
+    /// Configuration-only read (Tasks 49–50): no Git inspection, so rows
+    /// for rename/remove/reorder exist even when Git is unavailable.
+    /// </summary>
+    public Task<IReadOnlyList<RepositoryConfiguration>> LoadConfigurationsAsync(
+        CancellationToken cancellationToken)
+    {
+        return _store.LoadAsync(cancellationToken);
+    }
+
     public async Task<RepositoryDashboardItem> RefreshAsync(
         Guid repositoryId,
         CancellationToken cancellationToken)

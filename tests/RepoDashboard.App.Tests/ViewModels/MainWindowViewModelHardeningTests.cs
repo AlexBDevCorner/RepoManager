@@ -81,6 +81,11 @@ public sealed class MainWindowViewModelHardeningTests
             Task.FromResult<IReadOnlyList<RepositoryDashboardItem>>(
                 _items.ToList());
 
+        public Task<IReadOnlyList<RepositoryConfiguration>> LoadConfigurationsAsync(
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<RepositoryConfiguration>>(
+                _items.Select(i => i.Configuration).ToList());
+
         public Task<RepositoryDashboardItem> RefreshAsync(
             Guid repositoryId, CancellationToken cancellationToken) =>
             Task.FromResult(_items.First(i => i.Configuration.Id == repositoryId));
@@ -389,6 +394,11 @@ public sealed class MainWindowViewModelHardeningTests
         public Task<IReadOnlyList<RepositoryDashboardItem>> LoadAsync(
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<RepositoryDashboardItem>>([completed]);
+
+        public Task<IReadOnlyList<RepositoryConfiguration>> LoadConfigurationsAsync(
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<RepositoryConfiguration>>(
+                [completed.Configuration]);
 
         public Task<RepositoryDashboardItem> RefreshAsync(
             Guid repositoryId, CancellationToken cancellationToken) =>

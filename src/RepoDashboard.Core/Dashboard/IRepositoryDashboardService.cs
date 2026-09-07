@@ -12,6 +12,14 @@ public interface IRepositoryDashboardService
     Task<IReadOnlyList<RepositoryDashboardItem>> LoadAsync(
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Loads persisted repository configurations without inspecting Git
+    /// (Tasks 49–50). Lets the UI show rows for rename/remove/reorder
+    /// when Git is unavailable; Git-backed operations stay gated.
+    /// </summary>
+    Task<IReadOnlyList<RepositoryConfiguration>> LoadConfigurationsAsync(
+        CancellationToken cancellationToken);
+
     Task<RepositoryDashboardItem> RefreshAsync(
         Guid repositoryId,
         CancellationToken cancellationToken);

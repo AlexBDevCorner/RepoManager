@@ -462,4 +462,25 @@ public sealed class RepositoryRowViewModelTests
         act.Should().Throw<ArgumentException>();
         row.Name.Should().Be("Store");
     }
+
+    [Fact]
+    public void FromConfiguration_maps_placeholder_row_without_git()
+    {
+        var configuration = new RepositoryConfiguration
+        {
+            Id = Guid.NewGuid(),
+            Name = "Store",
+            Path = """C:\Source\Repos\Store"""
+        };
+
+        var row = RepositoryRowViewModel.FromConfiguration(configuration);
+
+        row.RepositoryId.Should().Be(configuration.Id);
+        row.Name.Should().Be("Store");
+        row.DetailsPath.Should().Be("""C:\Source\Repos\Store""");
+        row.DetailsRemote.Should().Be("origin");
+        row.Branch.Should().Be("—");
+        row.Explanation.Should().Contain("until Git is installed");
+        row.Activity.Should().Be(RepositoryActivity.Idle);
+    }
 }

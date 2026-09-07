@@ -41,10 +41,13 @@ public sealed class MainWindowViewModelTests
         public bool FailMove { get; set; }
 
         /// <summary>
-        /// When true, every method throws: proves the ViewModel never
-        /// reaches the dashboard (for example when Git is unavailable).
+        /// When true, every Git-backed method throws: proves the ViewModel
+        /// never inspects Git (for example when Git is unavailable).
+        /// Configuration-only reads stay allowed.
         /// </summary>
         public bool FailOnCall { get; set; }
+
+        public int ConfigLoadCalls { get; private set; }
 
         public FakeDashboard(IEnumerable<RepositoryDashboardItem>? items = null)
         {
@@ -67,6 +70,14 @@ public sealed class MainWindowViewModelTests
             LoadCalls++;
             return Task.FromResult<IReadOnlyList<RepositoryDashboardItem>>(
                 _items.ToList());
+        }
+
+        public Task<IReadOnlyList<RepositoryConfiguration>> LoadConfigurationsAsync(
+            CancellationToken cancellationToken)
+        {
+            ConfigLoadCalls++;
+            return Task.FromResult<IReadOnlyList<RepositoryConfiguration>>(
+                _items.Select(i => i.Configuration).ToList());
         }
 
         public Task<RepositoryDashboardItem> RefreshAsync(
@@ -314,9 +325,12 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task Initialize_git_unavailable_does_not_touch_dashboard()
+    public async Task Initialize_git_unavailable_loads_configuration_rows_without_inspection()
     {
-        var dashboard = new FakeDashboard { FailOnCall = true };
+        var dashboard = new FakeDashboard([Item("Store"), Item("Legacy")])
+        {
+            FailOnCall = true
+        };
         var sut = new MainWindowViewModel(
             new FakeGitEnvironment(available: false),
             dashboard,
@@ -325,20 +339,31 @@ public sealed class MainWindowViewModelTests
         await sut.InitializeAsync();
 
         sut.IsGitAvailable.Should().BeFalse();
-        sut.Repositories.Should().BeEmpty();
+        sut.Repositories.Select(r => r.Name)
+            .Should().BeEquivalentTo("Store", "Legacy");
         sut.StatusText.Should().Contain("until Git is installed");
+        dashboard.ConfigLoadCalls.Should().Be(1);
         dashboard.LoadCalls.Should().Be(0);
+        dashboard.RefreshCalls.Should().Be(0);
+        dashboard.RefreshAllCalls.Should().Be(0);
+        dashboard.AddCalls.Should().Be(0);
     }
 
     [Fact]
     public async Task Git_unavailable_disables_git_commands_but_not_remove()
     {
-        var dashboard = new FakeDashboard { FailOnCall = true };
+        var dashboard = new FakeDashboard([Item("Store")])
+        {
+            FailOnCall = true
+        };
         var sut = new MainWindowViewModel(
             new FakeGitEnvironment(available: false),
             dashboard,
             new CancelledPicker());
         await sut.InitializeAsync();
+
+        // The real startup flow loads the persisted row without Git.
+        sut.Repositories.Should().ContainSingle();
 
         sut.LoadCommand.CanExecute(null).Should().BeFalse();
         sut.AddCommand.CanExecute(null).Should().BeFalse();
@@ -346,8 +371,8 @@ public sealed class MainWindowViewModelTests
         sut.RefreshAllCommand.CanExecute(null).Should().BeFalse();
 
         // Direct execution (which bypasses CanExecute) still cannot
-        // reach the dashboard without Git.
-        sut.SelectedRepository = new RepositoryRowViewModel(Item("Store"));
+        // reach Git-backed dashboard operations without Git.
+        sut.SelectedRepository = sut.Repositories[0];
         await sut.RefreshCommand.ExecuteAsync(null);
         await sut.RefreshAllCommand.ExecuteAsync(null);
         await sut.AddCommand.ExecuteAsync(null);
@@ -355,8 +380,9 @@ public sealed class MainWindowViewModelTests
         dashboard.RefreshAllCalls.Should().Be(0);
         dashboard.AddCalls.Should().Be(0);
 
-        // Remove edits only configuration, so it stays available.
+        // Configuration-only commands stay available.
         sut.RemoveCommand.CanExecute(null).Should().BeTrue();
+        sut.RenameCommand.CanExecute(null).Should().BeTrue();
     }
 
     [Fact]
@@ -672,7 +698,7 @@ public sealed class MainWindowViewModelTests
     }
 
     [Fact]
-    public async Task Rename_stays_available_without_git_like_remove()
+    public async Task Rename_executes_without_git_on_loaded_configuration_row()
     {
         var dashboard = new FakeDashboard([Item("Store")]);
         var sut = new MainWindowViewModel(
@@ -680,9 +706,44 @@ public sealed class MainWindowViewModelTests
             dashboard,
             new CancelledPicker(),
             repositoryNameDialog: new FixedNameDialog("Renamed"));
+
         await sut.InitializeAsync();
-        sut.SelectedRepository = new RepositoryRowViewModel(Item("Store"));
+
+        // The real startup flow: the row comes from configuration loading,
+        // not from a manually injected view model.
+        sut.Repositories.Should().ContainSingle();
+        sut.SelectedRepository = sut.Repositories[0];
 
         sut.RenameCommand.CanExecute(null).Should().BeTrue();
+        await sut.RenameCommand.ExecuteAsync(null);
+
+        sut.Repositories[0].Name.Should().Be("Renamed");
+        sut.StatusText.Should().Be("Renamed repository to 'Renamed'.");
+        dashboard.RenameCalls.Should().Be(1);
+        dashboard.LoadCalls.Should().Be(
+            0, "no Git inspection may run without Git");
+        dashboard.RefreshCalls.Should().Be(0);
+    }
+
+    [Fact]
+    public async Task Move_executes_without_git_on_loaded_configuration_rows()
+    {
+        var dashboard = new FakeDashboard([Item("A"), Item("B")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(available: false),
+            dashboard,
+            new CancelledPicker());
+
+        await sut.InitializeAsync();
+        sut.SelectedRepository = sut.Repositories[1];
+
+        sut.MoveUpCommand.CanExecute(null).Should().BeTrue();
+        await sut.MoveUpCommand.ExecuteAsync(null);
+
+        sut.Repositories.Select(r => r.Name).Should().Equal("B", "A");
+        sut.SelectedRepository!.Name.Should().Be("B");
+        dashboard.MoveCalls.Should().Be(1);
+        dashboard.LoadCalls.Should().Be(
+            0, "no Git inspection may run without Git");
     }
 }

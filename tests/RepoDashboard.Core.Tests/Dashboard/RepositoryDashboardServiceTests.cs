@@ -215,6 +215,24 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task LoadConfigurationsAsync_ReturnsStoreContentsWithoutInspecting()
+    {
+        var first = Config("Store");
+        var second = Config("Legacy", """C:\Source\Repos\Legacy""");
+        var store = new InMemoryStore([first, second]);
+        var inspector = new StubInspector(UpToDateSnapshot);
+        var sut = CreateSut(store, inspector);
+
+        var configurations = await sut.LoadConfigurationsAsync(
+            CancellationToken.None);
+
+        configurations.Select(c => c.Name).Should().Equal("Store", "Legacy");
+        configurations.Select(c => c.Id).Should().Equal(first.Id, second.Id);
+        inspector.Calls.Should().Be(
+            0, "configuration loading must never start Git inspection");
+    }
+
+    [Fact]
     public async Task RefreshAsync_ReturnsSingleItem()
     {
         var first = Config("Store");
