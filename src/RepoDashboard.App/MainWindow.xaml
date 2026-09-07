@@ -18,6 +18,15 @@
                     Command="{Binding DiscoverCommand}"
                     Margin="4,0" />
             <Separator />
+            <Button Content="Rename"
+                    Command="{Binding RenameCommand}"
+                    Margin="4,0" />
+            <Button Content="Move Up"
+                    Command="{Binding MoveUpCommand}"
+                    Margin="4,0" />
+            <Button Content="Move Down"
+                    Command="{Binding MoveDownCommand}"
+                    Margin="4,0" />
             <Button Content="Remove from dashboard"
                     Command="{Binding RemoveCommand}"
                     Margin="4,0" />
@@ -181,11 +190,16 @@
             </StackPanel>
         </Border>
 
+        <!-- Task 50: custom order is the dashboard order. User sorting
+             must stay disabled: a sorted view would show positions that
+             differ from the ObservableCollection indexes Move Up/Down
+             persist, silently saving an order the user never saw. -->
         <DataGrid ItemsSource="{Binding Repositories}"
                    SelectedItem="{Binding SelectedRepository, Mode=TwoWay}"
                    AutoGenerateColumns="False"
                    IsReadOnly="True"
-                   SelectionMode="Single">
+                   SelectionMode="Single"
+                   CanUserSortColumns="False">
             <DataGrid.RowStyle>
                 <!-- Per-repository menu: commands come from the main view
                      model stashed in the row's Tag (resolved while the row
@@ -231,6 +245,22 @@
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <MenuItem Header="Copy Path"
                                           Command="{Binding PlacementTarget.Tag.CopyPathCommand,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.DataContext,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <Separator />
+                                <MenuItem Header="Rename..."
+                                          Command="{Binding PlacementTarget.Tag.RenameCommand,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.DataContext,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="Move Up"
+                                          Command="{Binding PlacementTarget.Tag.MoveUpCommand,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.DataContext,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="Move Down"
+                                          Command="{Binding PlacementTarget.Tag.MoveDownCommand,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                           CommandParameter="{Binding PlacementTarget.DataContext,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}" />

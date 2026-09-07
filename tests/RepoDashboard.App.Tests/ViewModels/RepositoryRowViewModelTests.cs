@@ -434,4 +434,53 @@ public sealed class RepositoryRowViewModelTests
         row.WorktreeStatus.Should().Be("Dirty");
         row.UpdateStatus.Should().Be(nameof(UpdateEligibility.Dirty));
     }
+
+    [Fact]
+    public void SetName_updates_displayed_name_only()
+    {
+        var row = new RepositoryRowViewModel(Item(name: "Store"));
+        var idBefore = row.RepositoryId;
+        var pathBefore = row.DetailsPath;
+
+        row.SetName("Fantasy Bot");
+
+        row.Name.Should().Be("Fantasy Bot");
+        row.RepositoryId.Should().Be(idBefore);
+        row.DetailsPath.Should().Be(pathBefore);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" ")]
+    [InlineData("\t")]
+    public void SetName_rejects_empty_names(string name)
+    {
+        var row = new RepositoryRowViewModel(Item(name: "Store"));
+
+        var act = () => row.SetName(name);
+
+        act.Should().Throw<ArgumentException>();
+        row.Name.Should().Be("Store");
+    }
+
+    [Fact]
+    public void FromConfiguration_maps_placeholder_row_without_git()
+    {
+        var configuration = new RepositoryConfiguration
+        {
+            Id = Guid.NewGuid(),
+            Name = "Store",
+            Path = """C:\Source\Repos\Store"""
+        };
+
+        var row = RepositoryRowViewModel.FromConfiguration(configuration);
+
+        row.RepositoryId.Should().Be(configuration.Id);
+        row.Name.Should().Be("Store");
+        row.DetailsPath.Should().Be("""C:\Source\Repos\Store""");
+        row.DetailsRemote.Should().Be("origin");
+        row.Branch.Should().Be("—");
+        row.Explanation.Should().Contain("until Git is installed");
+        row.Activity.Should().Be(RepositoryActivity.Idle);
+    }
 }

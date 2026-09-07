@@ -108,6 +108,47 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Creates a placeholder row from persisted configuration alone
+    /// (Tasks 49–50): shown when Git is unavailable so rename, remove
+    /// and reorder stay usable. Git-derived cells stay neutral —
+    /// no inspection is pretended.
+    /// </summary>
+    public static RepositoryRowViewModel FromConfiguration(
+        RepositoryConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var row = new RepositoryRowViewModel(
+            new RepositoryDashboardItem
+            {
+                Configuration = configuration,
+                Snapshot = new RepositorySnapshot
+                {
+                    RepositoryId = configuration.Id,
+                    Path = configuration.Path,
+                    InspectedAt = DateTimeOffset.UtcNow
+                },
+                UpdateDecision = new UpdateDecision(
+                    UpdateEligibility.Unknown,
+                    "Repository inspection is unavailable until Git is installed.")
+            });
+
+        row.Branch = "—";
+        row.WorktreeStatus = "—";
+        row.UpstreamStatus = "—";
+        row.DefaultBranchStatus = "—";
+        row.UpdateStatus = "—";
+        row.DetailsBranch = "—";
+        row.DetailsUpstream = "—";
+        row.DetailsRemoteDefault = "—";
+        row.DetailsVsUpstream = "—";
+        row.DetailsVsDefault = "—";
+        row.DetailsWorkingTree = "—";
+
+        return row;
+    }
+
+    /// <summary>
     /// Re-maps the row in place after a refresh, preserving selection.
     /// </summary>
     public void Update(RepositoryDashboardItem item)
@@ -143,6 +184,17 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
         LastFetchText = FormatLastFetch(item.LastSuccessfulFetch);
         MapTerminalActivity(item);
         MapDetails(item);
+    }
+
+    /// <summary>
+    /// Applies a user-chosen display name (Task 49 alias). Only the
+    /// presentation name changes — id, path and Git state are untouched.
+    /// </summary>
+    public void SetName(string name)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+
+        Name = name.Trim();
     }
 
     /// <summary>

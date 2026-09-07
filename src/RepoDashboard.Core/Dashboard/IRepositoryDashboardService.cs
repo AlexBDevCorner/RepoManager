@@ -1,3 +1,5 @@
+using RepoDashboard.Core.Models;
+
 namespace RepoDashboard.Core.Dashboard;
 
 /// <summary>
@@ -8,6 +10,14 @@ namespace RepoDashboard.Core.Dashboard;
 public interface IRepositoryDashboardService
 {
     Task<IReadOnlyList<RepositoryDashboardItem>> LoadAsync(
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Loads persisted repository configurations without inspecting Git
+    /// (Tasks 49–50). Lets the UI show rows for rename/remove/reorder
+    /// when Git is unavailable; Git-backed operations stay gated.
+    /// </summary>
+    Task<IReadOnlyList<RepositoryConfiguration>> LoadConfigurationsAsync(
         CancellationToken cancellationToken);
 
     Task<RepositoryDashboardItem> RefreshAsync(
@@ -36,6 +46,34 @@ public interface IRepositoryDashboardService
     /// <exception cref="KeyNotFoundException">Unknown repository id.</exception>
     Task RemoveAsync(
         Guid repositoryId,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Renames the persisted display name of a repository (Task 49 alias).
+    /// Configuration-only: never renames the folder and never touches Git.
+    /// Duplicate names are allowed — identity stays <c>Id</c> + <c>Path</c>.
+    /// The entry keeps its position in the collection.
+    /// </summary>
+    /// <exception cref="ArgumentException">Name is empty or whitespace.</exception>
+    /// <exception cref="KeyNotFoundException">Unknown repository id.</exception>
+    Task<RepositoryConfiguration> RenameAsync(
+        Guid repositoryId,
+        string name,
+        CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Moves a repository to a new position (Task 50 ordering).
+    /// The position inside <c>repositories.json</c> is the persisted order —
+    /// no order field exists on the configuration.
+    /// Configuration-only: never inspects Git and never touches remotes.
+    /// </summary>
+    /// <exception cref="KeyNotFoundException">Unknown repository id.</exception>
+    /// <exception cref="ArgumentOutOfRangeException">
+    /// <c>newIndex</c> is outside the collection.
+    /// </exception>
+    Task MoveAsync(
+        Guid repositoryId,
+        int newIndex,
         CancellationToken cancellationToken);
 
     /// <summary>

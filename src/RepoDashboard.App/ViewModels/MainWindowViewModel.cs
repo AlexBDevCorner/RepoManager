@@ -32,6 +32,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly IFolderPickerService _folderPicker;
     private readonly IRepositoryDiscoveryService _discovery;
     private readonly IDiscoveryDialogService _discoveryDialog;
+    private readonly IRepositoryNameDialogService _repositoryNameDialog;
 
     /// <summary>
     /// The currently running operation, if any. Cancelled by
@@ -61,6 +62,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(OpenTerminalCommand))]
     [NotifyCanExecuteChangedFor(nameof(CopyPathCommand))]
     [NotifyCanExecuteChangedFor(nameof(RemoveCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RenameCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MoveUpCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MoveDownCommand))]
     private RepositoryRowViewModel? _selectedRepository;
 
     [ObservableProperty]
@@ -85,6 +89,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(OpenTerminalCommand))]
     [NotifyCanExecuteChangedFor(nameof(CopyPathCommand))]
     [NotifyCanExecuteChangedFor(nameof(RemoveCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RenameCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MoveUpCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MoveDownCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelCommand))]
     private bool _isBusy;
 
@@ -112,7 +119,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         IFolderPickerService folderPicker,
         IRepositoryDiscoveryService? discovery = null,
         IDiscoveryDialogService? discoveryDialog = null,
-        IApplicationShutdown? applicationShutdown = null)
+        IApplicationShutdown? applicationShutdown = null,
+        IRepositoryNameDialogService? repositoryNameDialog = null)
     {
         ArgumentNullException.ThrowIfNull(gitEnvironment);
         ArgumentNullException.ThrowIfNull(dashboard);
@@ -123,6 +131,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _discovery = discovery ?? new StubDiscoveryService();
         _discoveryDialog = discoveryDialog ?? new StubDiscoveryDialogService();
         _applicationShutdown = applicationShutdown;
+        _repositoryNameDialog = repositoryNameDialog ?? new StubRepositoryNameDialogService();
     }
 
     /// <summary>
@@ -216,6 +225,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
             ISet<string> alreadyTrackedPaths) => null;
     }
 
+    private sealed class StubRepositoryNameDialogService : IRepositoryNameDialogService
+    {
+        public string? RequestName(
+            string currentName,
+            string repositoryPath) => null;
+    }
+
     public async Task InitializeAsync(
         CancellationToken cancellationToken = default)
     {
@@ -228,14 +244,65 @@ public sealed partial class MainWindowViewModel : ObservableObject
             : info.Error ?? "Git status unknown.";
 
         // Without git.exe every inspection would fail with obscure process
-        // errors, so stop here with one clear status instead.
+        // errors. Still load the persisted configurations as placeholder
+        // rows (Tasks 49–50): rename, remove and reorder are
+        // configuration-only and stay usable without Git.
         if (!IsGitAvailable)
         {
-            StatusText = "Repository inspection is unavailable until Git is installed.";
+            await LoadConfigurationRowsAsync(cancellationToken);
             return;
         }
 
         await LoadAsync(cancellationToken);
+    }
+
+    /// <summary>
+    /// Loads persisted configurations as inspection-free placeholder rows
+    /// when Git is unavailable. No Git process is ever started here.
+    /// </summary>
+    private async Task LoadConfigurationRowsAsync(
+        CancellationToken cancellationToken)
+    {
+        if (IsBusy)
+        {
+            return;
+        }
+
+        var operation = BeginOperation(cancellationToken);
+        IsBusy = true;
+
+        try
+        {
+            var configurations = await _dashboard.LoadConfigurationsAsync(
+                operation.Token);
+
+            Repositories.Clear();
+
+            foreach (var configuration in configurations)
+            {
+                Repositories.Add(
+                    RepositoryRowViewModel.FromConfiguration(configuration));
+            }
+
+            NotifyOrderingCommands();
+
+            StatusText = Repositories.Count == 0
+                ? "No repositories yet. Git operations are unavailable until Git is installed."
+                : $"Loaded {Repositories.Count} repositories. Git operations are unavailable until Git is installed.";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Loading cancelled.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Could not load repositories: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+            EndOperation(operation);
+        }
     }
 
     private bool CanLoad() => IsGitAvailable && !IsBusy;
@@ -313,6 +380,62 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private bool CanRemove(RepositoryRowViewModel? target) =>
         !IsBusy && (target ?? SelectedRepository) is not null;
 
+    // Rename edits only repositories.json (Task 49), so like Remove it
+    // stays available without Git.
+    private bool CanRename(RepositoryRowViewModel? target) =>
+        !IsBusy && (target ?? SelectedRepository) is not null;
+
+    // Ordering is configuration-only (Task 50): no Git gate, same as
+    // Remove and Rename.
+    private bool CanMoveUp(RepositoryRowViewModel? target)
+    {
+        if (IsBusy)
+        {
+            return false;
+        }
+
+        var row = target ?? SelectedRepository;
+
+        if (row is null)
+        {
+            return false;
+        }
+
+        return Repositories.IndexOf(row) > 0;
+    }
+
+    private bool CanMoveDown(RepositoryRowViewModel? target)
+    {
+        if (IsBusy)
+        {
+            return false;
+        }
+
+        var row = target ?? SelectedRepository;
+
+        if (row is null)
+        {
+            return false;
+        }
+
+        var index = Repositories.IndexOf(row);
+
+        return index >= 0 &&
+               index < Repositories.Count - 1;
+    }
+
+    /// <summary>
+    /// Move availability depends on the row position, so refresh both
+    /// commands after every collection change (load, add, remove, move).
+    /// Selection and busy changes notify automatically via
+    /// <c>NotifyCanExecuteChangedFor</c>.
+    /// </summary>
+    private void NotifyOrderingCommands()
+    {
+        MoveUpCommand.NotifyCanExecuteChanged();
+        MoveDownCommand.NotifyCanExecuteChanged();
+    }
+
     /// <summary>
     /// Guards direct invocations (commands bypass <c>CanExecute</c> when
     /// executed programmatically); the UI additionally disables the button.
@@ -374,6 +497,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
             StatusText = Repositories.Count == 0
                 ? "No repositories yet. Use Add Repository to get started."
                 : $"Loaded {Repositories.Count} repositories.";
+
+            NotifyOrderingCommands();
         }
         catch (OperationCanceledException)
         {
@@ -963,6 +1088,75 @@ public sealed partial class MainWindowViewModel : ObservableObject
         };
     }
 
+    /// <summary>
+    /// One failed add inside a batch (Task 48 partial success).
+    /// </summary>
+    private sealed record AddRepositoryFailure(
+        string Path,
+        string Message);
+
+    /// <summary>
+    /// Outcome of a multi-add batch: every valid repository is added,
+    /// failures are collected with their reasons, nothing is rolled back.
+    /// </summary>
+    private sealed record AddRepositoriesSummary(
+        int Added,
+        int Attempted,
+        IReadOnlyList<AddRepositoryFailure> Failures,
+        RepositoryRowViewModel? LastAdded);
+
+    /// <summary>
+    /// Adds several repositories through the single validated
+    /// <see cref="IRepositoryDashboardService.AddAsync"/> (Task 48):
+    /// no validation logic is duplicated here. Shared by explicit
+    /// multi-select and repository discovery so the two loops cannot
+    /// drift apart. Duplicate paths are attempted once; selection order
+    /// is preserved for appending.
+    /// </summary>
+    private async Task<AddRepositoriesSummary> AddRepositoriesAsync(
+        IEnumerable<string> paths,
+        CancellationToken cancellationToken)
+    {
+        var distinct = paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var failures = new List<AddRepositoryFailure>();
+        var added = 0;
+        RepositoryRowViewModel? lastAdded = null;
+
+        foreach (var path in distinct)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                var item = await _dashboard.AddAsync(
+                    path,
+                    cancellationToken);
+
+                var row = new RepositoryRowViewModel(item);
+                Repositories.Add(row);
+
+                lastAdded = row;
+                added++;
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                failures.Add(new AddRepositoryFailure(path, ex.Message));
+            }
+        }
+
+        if (lastAdded is not null)
+        {
+            SelectedRepository = lastAdded;
+        }
+
+        return new AddRepositoriesSummary(
+            added, distinct.Count, failures, lastAdded);
+    }
+
     [RelayCommand(CanExecute = nameof(CanAdd))]
     private async Task AddAsync(
         CancellationToken cancellationToken)
@@ -977,10 +1171,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        var path = _folderPicker.PickFolder(
-            "Choose a repository folder");
+        var paths = _folderPicker.PickFolders(
+            "Choose repository folders");
 
-        if (path is null)
+        if (paths is null || paths.Count == 0)
         {
             return;
         }
@@ -990,25 +1184,32 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         try
         {
-            var item = await _dashboard.AddAsync(path, operation.Token);
+            var result = await AddRepositoriesAsync(
+                paths, operation.Token);
 
-            var row = new RepositoryRowViewModel(item);
-            Repositories.Add(row);
-            SelectedRepository = row;
-            StatusText = $"Added '{item.Configuration.Name}'.";
+            if (result.Failures.Count == 0)
+            {
+                StatusText = result.Added == 1 && result.LastAdded is not null
+                    ? $"Added '{result.LastAdded.Name}'."
+                    : $"Added {result.Added} repositories.";
+            }
+            else if (result.Added == 0 && result.Failures.Count == 1)
+            {
+                // Single failure keeps the specific reason visible,
+                // as the previous single-add error path did.
+                StatusText = result.Failures[0].Message;
+            }
+            else
+            {
+                StatusText = $"Added {result.Added} of {result.Attempted} repositories. " +
+                             $"{result.Failures.Count} could not be added.";
+            }
+
+            NotifyOrderingCommands();
         }
         catch (OperationCanceledException)
         {
-            StatusText = "Adding repository cancelled.";
-        }
-        catch (Exception ex)
-        {
-            StatusText = ex.Message;
-            MessageBox.Show(
-                ex.Message,
-                "Repo Dashboard — Cannot add repository",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
+            StatusText = "Adding repositories cancelled.";
         }
         finally
         {
@@ -1082,39 +1283,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 return;
             }
 
-            var added = 0;
-            var failed = 0;
+            var result = await AddRepositoriesAsync(
+                selected, operation.Token);
 
-            foreach (var candidate in selected)
-            {
-                operation.Token.ThrowIfCancellationRequested();
+            StatusText = result.Failures.Count == 0
+                ? $"Added {result.Added} repositories."
+                : $"Added {result.Added} repositories, {result.Failures.Count} failed.";
 
-                try
-                {
-                    var item = await _dashboard.AddAsync(
-                        candidate, operation.Token);
-                    Repositories.Add(new RepositoryRowViewModel(item));
-                    added++;
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    failed++;
-                    StatusText = $"Could not add '{candidate}': {ex.Message}";
-                }
-            }
-
-            if (Repositories.Count > 0)
-            {
-                SelectedRepository = Repositories[^1];
-            }
-
-            StatusText = failed == 0
-                ? $"Added {added} repositories."
-                : $"Added {added} repositories, {failed} failed.";
+            NotifyOrderingCommands();
         }
         catch (OperationCanceledException)
         {
@@ -1171,6 +1347,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
             Repositories.Remove(selected);
             StatusText = $"Removed '{selected.Name}'.";
+            NotifyOrderingCommands();
         }
         catch (OperationCanceledException)
         {
@@ -1179,6 +1356,202 @@ public sealed partial class MainWindowViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusText = $"Could not remove '{selected.Name}': {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+            EndOperation(operation);
+        }
+    }
+
+    /// <summary>
+    /// Renames the selected repository display name (Task 49 alias).
+    /// Configuration-only like Remove: available without Git, never
+    /// renames the folder and never inspects Git.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanRename))]
+    private async Task RenameAsync(
+        RepositoryRowViewModel? target,
+        CancellationToken cancellationToken)
+    {
+        var selected = target ?? SelectedRepository;
+
+        if (selected is null)
+        {
+            StatusText = "Select a repository first.";
+            return;
+        }
+
+        if (IsBusy)
+        {
+            return;
+        }
+
+        var name = _repositoryNameDialog.RequestName(
+            selected.Name,
+            selected.DetailsPath);
+
+        if (name is null)
+        {
+            return;
+        }
+
+        var operation = BeginOperation(cancellationToken);
+        IsBusy = true;
+
+        try
+        {
+            var updated = await _dashboard.RenameAsync(
+                selected.RepositoryId,
+                name,
+                operation.Token);
+
+            selected.SetName(updated.Name);
+
+            StatusText = $"Renamed repository to '{updated.Name}'.";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Renaming repository cancelled.";
+        }
+        catch (Exception ex)
+        {
+            StatusText =
+                $"Could not rename '{selected.Name}': {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+            EndOperation(operation);
+        }
+    }
+
+    /// <summary>
+    /// Moves the selected repository one position up (Task 50).
+    /// Persists first via the dashboard service; the visible row moves
+    /// only after the save succeeds.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanMoveUp))]
+    private async Task MoveUpAsync(
+        RepositoryRowViewModel? target,
+        CancellationToken cancellationToken)
+    {
+        var row = target ?? SelectedRepository;
+
+        if (row is null)
+        {
+            StatusText = "Select a repository first.";
+            return;
+        }
+
+        if (IsBusy)
+        {
+            return;
+        }
+
+        var currentIndex = Repositories.IndexOf(row);
+
+        if (currentIndex <= 0)
+        {
+            return;
+        }
+
+        var newIndex = currentIndex - 1;
+
+        var operation = BeginOperation(cancellationToken);
+        IsBusy = true;
+
+        try
+        {
+            await _dashboard.MoveAsync(
+                row.RepositoryId,
+                newIndex,
+                operation.Token);
+
+            Repositories.Move(
+                currentIndex,
+                newIndex);
+
+            SelectedRepository = row;
+
+            StatusText = $"Moved '{row.Name}' up.";
+            NotifyOrderingCommands();
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Moving repository cancelled.";
+        }
+        catch (Exception ex)
+        {
+            StatusText =
+                $"Could not move '{row.Name}': {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+            EndOperation(operation);
+        }
+    }
+
+    /// <summary>
+    /// Moves the selected repository one position down (Task 50).
+    /// Persists first via the dashboard service; the visible row moves
+    /// only after the save succeeds.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanMoveDown))]
+    private async Task MoveDownAsync(
+        RepositoryRowViewModel? target,
+        CancellationToken cancellationToken)
+    {
+        var row = target ?? SelectedRepository;
+
+        if (row is null)
+        {
+            StatusText = "Select a repository first.";
+            return;
+        }
+
+        if (IsBusy)
+        {
+            return;
+        }
+
+        var currentIndex = Repositories.IndexOf(row);
+
+        if (currentIndex < 0 || currentIndex >= Repositories.Count - 1)
+        {
+            return;
+        }
+
+        var newIndex = currentIndex + 1;
+
+        var operation = BeginOperation(cancellationToken);
+        IsBusy = true;
+
+        try
+        {
+            await _dashboard.MoveAsync(
+                row.RepositoryId,
+                newIndex,
+                operation.Token);
+
+            Repositories.Move(
+                currentIndex,
+                newIndex);
+
+            SelectedRepository = row;
+
+            StatusText = $"Moved '{row.Name}' down.";
+            NotifyOrderingCommands();
+        }
+        catch (OperationCanceledException)
+        {
+            StatusText = "Moving repository cancelled.";
+        }
+        catch (Exception ex)
+        {
+            StatusText =
+                $"Could not move '{row.Name}': {ex.Message}";
         }
         finally
         {

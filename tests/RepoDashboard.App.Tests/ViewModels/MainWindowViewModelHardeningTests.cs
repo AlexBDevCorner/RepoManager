@@ -30,6 +30,22 @@ public sealed class MainWindowViewModelHardeningTests
 
         public int AddCalls { get; private set; }
 
+        public int RenameCalls { get; private set; }
+
+        public int MoveCalls { get; private set; }
+
+        public bool FailMove { get; set; }
+
+        /// <summary>
+        /// Returns an exception to throw for a path, or null to succeed.
+        /// </summary>
+        public Func<string, Exception?> AddFailureFor { get; set; } = _ => null;
+
+        /// <summary>
+        /// Invoked with the 1-based call number on every add attempt.
+        /// </summary>
+        public Action<int>? OnAdd { get; set; }
+
         public static RepositoryDashboardItem ItemFor(string path)
         {
             var configuration = new RepositoryConfiguration
@@ -65,6 +81,11 @@ public sealed class MainWindowViewModelHardeningTests
             Task.FromResult<IReadOnlyList<RepositoryDashboardItem>>(
                 _items.ToList());
 
+        public Task<IReadOnlyList<RepositoryConfiguration>> LoadConfigurationsAsync(
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<RepositoryConfiguration>>(
+                _items.Select(i => i.Configuration).ToList());
+
         public Task<RepositoryDashboardItem> RefreshAsync(
             Guid repositoryId, CancellationToken cancellationToken) =>
             Task.FromResult(_items.First(i => i.Configuration.Id == repositoryId));
@@ -94,6 +115,15 @@ public sealed class MainWindowViewModelHardeningTests
             string path, CancellationToken cancellationToken)
         {
             AddCalls++;
+            OnAdd?.Invoke(AddCalls);
+
+            var failure = AddFailureFor(path);
+
+            if (failure is not null)
+            {
+                throw failure;
+            }
+
             var item = ItemFor(Path.GetFullPath(path));
             _items.Add(item);
             return Task.FromResult(item);
@@ -103,6 +133,70 @@ public sealed class MainWindowViewModelHardeningTests
             Guid repositoryId, CancellationToken cancellationToken)
         {
             _items.RemoveAll(i => i.Configuration.Id == repositoryId);
+            return Task.CompletedTask;
+        }
+
+        public Task<RepositoryConfiguration> RenameAsync(
+            Guid repositoryId,
+            string name,
+            CancellationToken cancellationToken)
+        {
+            RenameCalls++;
+
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                throw new ArgumentException(
+                    "Repository name must not be empty.", nameof(name));
+            }
+
+            var index = _items.FindIndex(
+                i => i.Configuration.Id == repositoryId);
+
+            if (index < 0)
+            {
+                throw new KeyNotFoundException(
+                    $"Repository '{repositoryId}' is not on the dashboard.");
+            }
+
+            var updated = _items[index].Configuration with { Name = name.Trim() };
+            _items[index] = _items[index] with { Configuration = updated };
+            return Task.FromResult(updated);
+        }
+
+        public Task MoveAsync(
+            Guid repositoryId,
+            int newIndex,
+            CancellationToken cancellationToken)
+        {
+            MoveCalls++;
+
+            if (FailMove)
+            {
+                throw new InvalidOperationException("move boom");
+            }
+
+            var current = _items.FindIndex(
+                i => i.Configuration.Id == repositoryId);
+
+            if (current < 0)
+            {
+                throw new KeyNotFoundException(
+                    $"Repository '{repositoryId}' is not on the dashboard.");
+            }
+
+            if (newIndex < 0 || newIndex >= _items.Count)
+            {
+                throw new ArgumentOutOfRangeException(nameof(newIndex));
+            }
+
+            if (current == newIndex)
+            {
+                return Task.CompletedTask;
+            }
+
+            var item = _items[current];
+            _items.RemoveAt(current);
+            _items.Insert(newIndex, item);
             return Task.CompletedTask;
         }
     }
@@ -131,11 +225,36 @@ public sealed class MainWindowViewModelHardeningTests
     private sealed class CancelledPicker : IFolderPickerService
     {
         public string? PickFolder(string title) => null;
+
+        public IReadOnlyList<string>? PickFolders(string title) => null;
     }
 
     private sealed class FixedPicker(string? path) : IFolderPickerService
     {
         public string? PickFolder(string title) => path;
+
+        public IReadOnlyList<string>? PickFolders(string title) =>
+            path is null ? null : [path];
+    }
+
+    private sealed class FixedMultiPicker(IReadOnlyList<string>? paths) : IFolderPickerService
+    {
+        public string? PickFolder(string title) => paths?.FirstOrDefault();
+
+        public IReadOnlyList<string>? PickFolders(string title) => paths;
+    }
+
+    /// <summary>
+    /// Proves discovery uses the single-folder picker for its search root:
+    /// multi-select must never be consulted here.
+    /// </summary>
+    private sealed class DiscoverRootPicker(string root) : IFolderPickerService
+    {
+        public string? PickFolder(string title) => root;
+
+        public IReadOnlyList<string>? PickFolders(string title) =>
+            throw new InvalidOperationException(
+                "Discovery must use the single-folder picker.");
     }
 
     /// <summary>
@@ -276,6 +395,11 @@ public sealed class MainWindowViewModelHardeningTests
             CancellationToken cancellationToken) =>
             Task.FromResult<IReadOnlyList<RepositoryDashboardItem>>([completed]);
 
+        public Task<IReadOnlyList<RepositoryConfiguration>> LoadConfigurationsAsync(
+            CancellationToken cancellationToken) =>
+            Task.FromResult<IReadOnlyList<RepositoryConfiguration>>(
+                [completed.Configuration]);
+
         public Task<RepositoryDashboardItem> RefreshAsync(
             Guid repositoryId, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
@@ -310,6 +434,18 @@ public sealed class MainWindowViewModelHardeningTests
 
         public Task RemoveAsync(
             Guid repositoryId, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<RepositoryConfiguration> RenameAsync(
+            Guid repositoryId,
+            string name,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task MoveAsync(
+            Guid repositoryId,
+            int newIndex,
+            CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }
 
@@ -440,5 +576,304 @@ public sealed class MainWindowViewModelHardeningTests
 
         row.DetailsGitHint.Should().BeEmpty();
         row.DetailsGitError.Should().Be(raw);
+    }
+
+    [Fact]
+    public async Task Add_adds_multiple_repositories_in_selection_order()
+    {
+        var dashboard = new FakeDashboard();
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard,
+            new FixedMultiPicker(
+            [
+                @"C:\Source\Repos\RepoA",
+                @"C:\Source\Repos\RepoB",
+                @"C:\Source\Repos\RepoC"
+            ]));
+        await sut.InitializeAsync();
+
+        await sut.AddCommand.ExecuteAsync(null);
+
+        dashboard.AddCalls.Should().Be(3);
+        sut.Repositories.Select(r => r.Name)
+            .Should().Equal("RepoA", "RepoB", "RepoC");
+        sut.SelectedRepository.Should().Be(sut.Repositories[^1]);
+        sut.StatusText.Should().Be("Added 3 repositories.");
+        sut.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Add_single_folder_keeps_legacy_status_wording()
+    {
+        var dashboard = new FakeDashboard();
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard,
+            new FixedMultiPicker([@"C:\Source\Repos\RepoManager"]));
+        await sut.InitializeAsync();
+
+        await sut.AddCommand.ExecuteAsync(null);
+
+        dashboard.AddCalls.Should().Be(1);
+        sut.Repositories.Should().ContainSingle();
+        sut.StatusText.Should().Be("Added 'RepoManager'.");
+    }
+
+    [Fact]
+    public async Task Add_picker_cancelled_calls_nothing_and_stays_idle()
+    {
+        var dashboard = new FakeDashboard();
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker());
+        await sut.InitializeAsync();
+
+        await sut.AddCommand.ExecuteAsync(null);
+
+        dashboard.AddCalls.Should().Be(0);
+        sut.Repositories.Should().BeEmpty();
+        sut.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Add_empty_selection_is_treated_like_cancellation()
+    {
+        var dashboard = new FakeDashboard();
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard,
+            new FixedMultiPicker([]));
+        await sut.InitializeAsync();
+
+        await sut.AddCommand.ExecuteAsync(null);
+
+        dashboard.AddCalls.Should().Be(0);
+        sut.Repositories.Should().BeEmpty();
+        sut.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Add_partial_failure_keeps_valid_repositories()
+    {
+        var dashboard = new FakeDashboard
+        {
+            AddFailureFor = path => path.EndsWith("RepoB")
+                ? new InvalidOperationException(
+                    "'C:\\Source\\Repos\\RepoB' is already on the dashboard as 'RepoB'.")
+                : null
+        };
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard,
+            new FixedMultiPicker(
+            [
+                @"C:\Source\Repos\RepoA",
+                @"C:\Source\Repos\RepoB",
+                @"C:\Source\Repos\RepoC"
+            ]));
+        await sut.InitializeAsync();
+
+        await sut.AddCommand.ExecuteAsync(null);
+
+        dashboard.AddCalls.Should().Be(3);
+        sut.Repositories.Select(r => r.Name)
+            .Should().Equal("RepoA", "RepoC");
+        sut.StatusText.Should().Be(
+            "Added 2 of 3 repositories. 1 could not be added.");
+        sut.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Add_duplicate_paths_are_attempted_once()
+    {
+        var dashboard = new FakeDashboard();
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard,
+            new FixedMultiPicker(
+            [
+                @"C:\Source\Repos\RepoA",
+                @"C:\Source\Repos\RepoA"
+            ]));
+        await sut.InitializeAsync();
+
+        await sut.AddCommand.ExecuteAsync(null);
+
+        dashboard.AddCalls.Should().Be(1);
+        sut.Repositories.Should().ContainSingle();
+        sut.StatusText.Should().Be("Added 'RepoA'.");
+    }
+
+    [Fact]
+    public async Task Add_cancelled_mid_batch_keeps_completed_and_stops()
+    {
+        var dashboard = new FakeDashboard();
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard,
+            new FixedMultiPicker(
+            [
+                @"C:\Source\Repos\RepoA",
+                @"C:\Source\Repos\RepoB",
+                @"C:\Source\Repos\RepoC"
+            ]));
+        await sut.InitializeAsync();
+        dashboard.OnAdd = call =>
+        {
+            if (call == 2)
+            {
+                sut.CancelActiveOperation();
+            }
+        };
+
+        await sut.AddCommand.ExecuteAsync(null);
+
+        // The third repository never started: cancelled before its attempt.
+        dashboard.AddCalls.Should().Be(2);
+        sut.Repositories.Select(r => r.Name)
+            .Should().Equal("RepoA", "RepoB");
+        sut.StatusText.Should().Be("Adding repositories cancelled.");
+        sut.IsBusy.Should().BeFalse();
+        sut.CancelCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Discover_still_uses_single_folder_picker_for_root()
+    {
+        var dashboard = new FakeDashboard();
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard,
+            new DiscoverRootPicker(@"C:\Source\Repos"),
+            new FakeDiscovery([Discovered("Store")]),
+            new FakeDialog([@"C:\Source\Repos\Store"]));
+        await sut.InitializeAsync();
+
+        await sut.DiscoverCommand.ExecuteAsync(null);
+
+        sut.Repositories.Select(r => r.Name)
+            .Should().BeEquivalentTo("Store");
+        dashboard.AddCalls.Should().Be(1);
+    }
+
+    private static async Task<MainWindowViewModel> SeededWithAsync(
+        FakeDashboard dashboard,
+        params string[] names)
+    {
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard,
+            new FixedMultiPicker(
+                names.Select(n => $"""C:\Source\Repos\{n}""").ToList()));
+        await sut.InitializeAsync();
+        await sut.AddCommand.ExecuteAsync(null);
+        return sut;
+    }
+
+    [Fact]
+    public async Task MoveUp_reorders_and_keeps_selection()
+    {
+        var dashboard = new FakeDashboard();
+        var sut = await SeededWithAsync(dashboard, "A", "B", "C");
+        sut.SelectedRepository = sut.Repositories[1];
+
+        await sut.MoveUpCommand.ExecuteAsync(null);
+
+        sut.Repositories.Select(r => r.Name)
+            .Should().Equal("B", "A", "C");
+        sut.SelectedRepository!.Name.Should().Be("B");
+        sut.StatusText.Should().Be("Moved 'B' up.");
+        sut.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task MoveDown_reorders_and_keeps_selection()
+    {
+        var dashboard = new FakeDashboard();
+        var sut = await SeededWithAsync(dashboard, "A", "B", "C");
+        sut.SelectedRepository = sut.Repositories[1];
+
+        await sut.MoveDownCommand.ExecuteAsync(null);
+
+        sut.Repositories.Select(r => r.Name)
+            .Should().Equal("A", "C", "B");
+        sut.SelectedRepository!.Name.Should().Be("B");
+        sut.StatusText.Should().Be("Moved 'B' down.");
+    }
+
+    [Fact]
+    public async Task MoveDown_with_explicit_target_uses_target_not_selection()
+    {
+        var dashboard = new FakeDashboard();
+        var sut = await SeededWithAsync(dashboard, "A", "B", "C");
+        sut.SelectedRepository = sut.Repositories[0];
+        var target = sut.Repositories[1];
+
+        await sut.MoveDownCommand.ExecuteAsync(target);
+
+        sut.Repositories.Select(r => r.Name)
+            .Should().Equal("A", "C", "B");
+        sut.SelectedRepository!.Name.Should().Be("B");
+    }
+
+    [Fact]
+    public async Task Move_boundary_commands_reflect_position()
+    {
+        var dashboard = new FakeDashboard();
+        var sut = await SeededWithAsync(dashboard, "A", "B", "C");
+
+        sut.SelectedRepository = sut.Repositories[0];
+        sut.MoveUpCommand.CanExecute(null).Should().BeFalse();
+        sut.MoveUpCommand.CanExecute(sut.Repositories[0]).Should().BeFalse();
+        sut.MoveDownCommand.CanExecute(null).Should().BeTrue();
+
+        sut.SelectedRepository = sut.Repositories[2];
+        sut.MoveUpCommand.CanExecute(null).Should().BeTrue();
+        sut.MoveDownCommand.CanExecute(null).Should().BeFalse();
+        sut.MoveDownCommand.CanExecute(sut.Repositories[2]).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Move_with_single_repository_is_disabled_both_ways()
+    {
+        var dashboard = new FakeDashboard();
+        var sut = await SeededWithAsync(dashboard, "Only");
+        sut.SelectedRepository = sut.Repositories[0];
+
+        sut.MoveUpCommand.CanExecute(null).Should().BeFalse();
+        sut.MoveDownCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Move_failure_leaves_visible_order_and_selection()
+    {
+        var dashboard = new FakeDashboard { FailMove = true };
+        var sut = await SeededWithAsync(dashboard, "A", "B", "C");
+        var selected = sut.Repositories[1];
+        sut.SelectedRepository = selected;
+
+        await sut.MoveUpCommand.ExecuteAsync(null);
+
+        sut.Repositories.Select(r => r.Name)
+            .Should().Equal("A", "B", "C");
+        sut.SelectedRepository.Should().Be(selected);
+        sut.StatusText.Should().Contain("Could not move 'B'");
+        sut.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task RefreshAll_preserves_custom_order_regardless_of_return_order()
+    {
+        var dashboard = new FakeDashboard();
+        var sut = await SeededWithAsync(dashboard, "Store", "Search", "RepoManager");
+
+        // Custom order: Search first.
+        sut.SelectedRepository = sut.Repositories[1];
+        await sut.MoveUpCommand.ExecuteAsync(null);
+        sut.Repositories.Select(r => r.Name)
+            .Should().Equal("Search", "Store", "RepoManager");
+
+        // The service returns items in a different (persisted) order —
+        // rows must still follow the visible custom order, keyed by id.
+        await dashboard.MoveAsync(
+            sut.Repositories[2].RepositoryId, 0, CancellationToken.None);
+
+        await sut.RefreshAllCommand.ExecuteAsync(null);
+
+        sut.Repositories.Select(r => r.Name)
+            .Should().Equal("Search", "Store", "RepoManager");
+        sut.SelectedRepository!.Name.Should().Be("Search");
     }
 }
