@@ -82,6 +82,14 @@ public sealed partial class DiscoveryDialogViewModel : ObservableObject
                 candidate,
                 IsAlreadyTracked(candidate.Path, alreadyTrackedPaths)));
         }
+
+        // Review #15: preselect the first selectable row so the
+        // ListBox-scoped shortcuts (Space / Ctrl+A) are meaningful even
+        // before the user moves the highlight. Falls back to the first
+        // row when everything is already tracked; stays null when empty.
+        SelectedOption =
+            Options.FirstOrDefault(o => o.IsSelectable)
+            ?? Options.FirstOrDefault();
     }
 
     public IReadOnlyList<string> SelectedPaths =>

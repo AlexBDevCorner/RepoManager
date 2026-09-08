@@ -17,6 +17,22 @@ public partial class DiscoveryDialog : Window
         ArgumentNullException.ThrowIfNull(viewModel);
         InitializeComponent();
         DataContext = viewModel;
+
+        // Review #15: ListBox.InputBindings only participate when focus
+        // is inside the ListBox. Focus it on Loaded (per WPF focus
+        // guidance) and ensure a sensible highlight so Space / arrows /
+        // Ctrl+A work immediately after open.
+        Loaded += (_, _) =>
+        {
+            if (viewModel.SelectedOption is null)
+            {
+                viewModel.SelectedOption =
+                    viewModel.Options.FirstOrDefault(o => o.IsSelectable)
+                    ?? viewModel.Options.FirstOrDefault();
+            }
+
+            RepositoryList.Focus();
+        };
     }
 
     private void AddSelected_Click(object sender, RoutedEventArgs e)

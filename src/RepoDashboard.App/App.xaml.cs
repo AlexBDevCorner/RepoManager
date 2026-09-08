@@ -58,6 +58,7 @@ public partial class App : Application
                 services.AddSingleton<IFolderPickerService, FolderPickerService>();
                 services.AddSingleton<IDiscoveryDialogService, DiscoveryDialogService>();
                 services.AddSingleton<IRepositoryNameDialogService, RepositoryNameDialogService>();
+                services.AddSingleton<IRepositoryRemovalConfirmationService, RepositoryRemovalConfirmationService>();
 
                 services.AddSingleton<MainWindowViewModel>();
                 services.AddSingleton<MainWindow>();

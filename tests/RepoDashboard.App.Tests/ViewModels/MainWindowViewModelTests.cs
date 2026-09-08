@@ -234,6 +234,11 @@ public sealed class MainWindowViewModelTests
         }
     }
 
+    private sealed class FixedRemovalConfirmation(bool confirmed) : IRepositoryRemovalConfirmationService
+    {
+        public bool ConfirmRemoval(string repositoryName, string repositoryPath) => confirmed;
+    }
+
     private static RepositoryDashboardItem Item(string name)
     {
         var configuration = new RepositoryConfiguration
@@ -804,10 +809,8 @@ public sealed class MainWindowViewModelTests
         var dashboard = new FakeDashboard(
             [Item("A"), Item("B"), Item("C"), Item("D")]);
         var sut = new MainWindowViewModel(
-            new FakeGitEnvironment(), dashboard, new CancelledPicker())
-        {
-            ConfirmRemove = _ => true
-        };
+            new FakeGitEnvironment(), dashboard, new CancelledPicker(),
+            removalConfirmation: new FixedRemovalConfirmation(true));
         await sut.InitializeAsync();
         sut.SelectedRepository = sut.Repositories[1];
 
@@ -822,10 +825,8 @@ public sealed class MainWindowViewModelTests
     {
         var dashboard = new FakeDashboard([Item("A"), Item("B")]);
         var sut = new MainWindowViewModel(
-            new FakeGitEnvironment(), dashboard, new CancelledPicker())
-        {
-            ConfirmRemove = _ => true
-        };
+            new FakeGitEnvironment(), dashboard, new CancelledPicker(),
+            removalConfirmation: new FixedRemovalConfirmation(true));
         await sut.InitializeAsync();
         sut.SelectedRepository = sut.Repositories[1];
 
@@ -840,10 +841,8 @@ public sealed class MainWindowViewModelTests
     {
         var dashboard = new FakeDashboard([Item("Only")]);
         var sut = new MainWindowViewModel(
-            new FakeGitEnvironment(), dashboard, new CancelledPicker())
-        {
-            ConfirmRemove = _ => true
-        };
+            new FakeGitEnvironment(), dashboard, new CancelledPicker(),
+            removalConfirmation: new FixedRemovalConfirmation(true));
         await sut.InitializeAsync();
         sut.SelectedRepository = sut.Repositories[0];
 
@@ -858,10 +857,8 @@ public sealed class MainWindowViewModelTests
     {
         var dashboard = new FakeDashboard([Item("A"), Item("B")]);
         var sut = new MainWindowViewModel(
-            new FakeGitEnvironment(), dashboard, new CancelledPicker())
-        {
-            ConfirmRemove = _ => false
-        };
+            new FakeGitEnvironment(), dashboard, new CancelledPicker(),
+            removalConfirmation: new FixedRemovalConfirmation(false));
         await sut.InitializeAsync();
         var selected = sut.Repositories[0];
         sut.SelectedRepository = selected;

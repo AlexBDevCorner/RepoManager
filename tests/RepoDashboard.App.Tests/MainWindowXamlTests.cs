@@ -289,12 +289,15 @@ public sealed class MainWindowXamlTests
         // Task 52: arrows move (native ListBox), Space toggles, Ctrl+A
         // selects all available, Ctrl+Shift+A clears. Enter/Esc are
         // covered by IsDefault/IsCancel buttons.
+        // Review #15: the ListBox is named so the dialog can focus it on
+        // Loaded — ListBox.InputBindings only work when focus is inside.
         var document = XDocument.Load(FindXaml("DiscoveryDialog.xaml"));
 
         var listBox = document
             .Descendants(Presentation + "ListBox")
             .Single();
 
+        listBox.Attribute(XamlNamespace + "Name")?.Value.Should().Be("RepositoryList");
         listBox.Attribute("SelectedItem")?.Value.Should().Contain("SelectedOption");
 
         var bindings = listBox
@@ -317,6 +320,38 @@ public sealed class MainWindowXamlTests
             .Single();
 
         checkBox.Attribute("Focusable")?.Value.Should().Be("False");
+    }
+
+    [Fact]
+    public void DiscoveryDialog_focuses_checklist_on_open()
+    {
+        // Review #15: ListBox-scoped shortcuts need focus inside the
+        // ListBox. The dialog must focus RepositoryList on Loaded and
+        // ensure a sensible highlight as fallback.
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        string? codeBehind = null;
+
+        while (directory is not null)
+        {
+            var candidate = Path.Combine(
+                directory.FullName,
+                "src",
+                "RepoDashboard.App",
+                "DiscoveryDialog.xaml.cs");
+
+            if (File.Exists(candidate))
+            {
+                codeBehind = File.ReadAllText(candidate);
+                break;
+            }
+
+            directory = directory.Parent;
+        }
+
+        codeBehind.Should().NotBeNull("could not locate DiscoveryDialog.xaml.cs");
+        codeBehind.Should().Contain("RepositoryList.Focus()");
+        codeBehind.Should().Contain("SelectedOption");
     }
 
     [Fact]

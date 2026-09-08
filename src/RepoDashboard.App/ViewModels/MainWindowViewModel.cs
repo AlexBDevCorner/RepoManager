@@ -33,6 +33,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly IRepositoryDiscoveryService _discovery;
     private readonly IDiscoveryDialogService _discoveryDialog;
     private readonly IRepositoryNameDialogService _repositoryNameDialog;
+    private readonly IRepositoryRemovalConfirmationService _removalConfirmation;
 
     /// <summary>
     /// The currently running operation, if any. Cancelled by
@@ -51,23 +52,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// </summary>
     private readonly CancellationTokenSource _appLifetime = new();
     private readonly IApplicationShutdown? _applicationShutdown;
-
-    /// <summary>
-    /// Task 52 test seam for the Remove confirmation dialog. Production
-    /// shows the existing <see cref="MessageBox"/> confirmation ("files
-    /// will not be deleted"); tests substitute a stub to avoid blocking
-    /// on modal UI. The confirmation itself is unchanged.
-    /// </summary>
-    public Func<RepositoryRowViewModel, bool> ConfirmRemove { get; set; } =
-        DefaultConfirmRemove;
-
-    private static bool DefaultConfirmRemove(RepositoryRowViewModel row) =>
-        MessageBox.Show(
-            $"Remove {row.Name} from Repo Dashboard?\n\n" +
-            "The repository and its files will not be deleted.",
-            "Repo Dashboard",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question) == MessageBoxResult.Yes;
 
     public ObservableCollection<RepositoryRowViewModel> Repositories { get; } = [];
 
@@ -137,7 +121,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         IRepositoryDiscoveryService? discovery = null,
         IDiscoveryDialogService? discoveryDialog = null,
         IApplicationShutdown? applicationShutdown = null,
-        IRepositoryNameDialogService? repositoryNameDialog = null)
+        IRepositoryNameDialogService? repositoryNameDialog = null,
+        IRepositoryRemovalConfirmationService? removalConfirmation = null)
     {
         ArgumentNullException.ThrowIfNull(gitEnvironment);
         ArgumentNullException.ThrowIfNull(dashboard);
@@ -149,6 +134,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _discoveryDialog = discoveryDialog ?? new StubDiscoveryDialogService();
         _applicationShutdown = applicationShutdown;
         _repositoryNameDialog = repositoryNameDialog ?? new StubRepositoryNameDialogService();
+        _removalConfirmation = removalConfirmation ?? new StubRemovalConfirmationService();
     }
 
     /// <summary>
@@ -247,6 +233,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
         public string? RequestName(
             string currentName,
             string repositoryPath) => null;
+    }
+
+    /// <summary>
+    /// Safe default when no confirmation service is injected (unit tests
+    /// without a removal fake): removal stays cancelled so no row can be
+    /// removed without explicit user confirmation.
+    /// </summary>
+    private sealed class StubRemovalConfirmationService : IRepositoryRemovalConfirmationService
+    {
+        public bool ConfirmRemoval(
+            string repositoryName,
+            string repositoryPath) => false;
     }
 
     public async Task InitializeAsync(
@@ -1374,7 +1372,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        if (!ConfirmRemove(selected))
+        if (!_removalConfirmation.ConfirmRemoval(
+                selected.Name,
+                selected.DetailsPath))
         {
             return;
         }

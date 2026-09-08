@@ -23,7 +23,8 @@
              available, Ctrl+Shift+A clears, Enter confirms (IsDefault),
              Esc cancels (IsCancel). CheckBoxes are not focusable so
              focus stays on the ListBox for keyboard navigation. -->
-        <ListBox ItemsSource="{Binding Options}"
+        <ListBox x:Name="RepositoryList"
+                 ItemsSource="{Binding Options}"
                  SelectedItem="{Binding SelectedOption, Mode=TwoWay}"
                  SelectionMode="Single">
             <ListBox.InputBindings>
