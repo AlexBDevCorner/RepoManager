@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using RepoDashboard.Core.Discovery;
 
 namespace RepoDashboard.App.ViewModels;
@@ -16,6 +17,57 @@ public sealed partial class DiscoveryDialogViewModel : ObservableObject
 
     [ObservableProperty]
     private string _title = "Select repositories to add";
+
+    /// <summary>
+    /// Task 52: currently highlighted checklist row. Bound to
+    /// ListBox.SelectedItem so Space can toggle it without the mouse.
+    /// Checkboxes themselves are Focusable="False" so arrow navigation
+    /// stays on the ListBox.
+    /// </summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ToggleSelectedCommand))]
+    private DiscoveredRepositoryOption? _selectedOption;
+
+    /// <summary>
+    /// Task 52: Space toggles the highlighted row. Already-tracked rows
+    /// expose IsSelectable == false and are never toggled — the existing
+    /// option model owns duplicate prevention.
+    /// </summary>
+    private bool CanToggleSelected() =>
+        SelectedOption?.IsSelectable == true;
+
+    [RelayCommand(CanExecute = nameof(CanToggleSelected))]
+    private void ToggleSelected()
+    {
+        if (SelectedOption is { IsSelectable: true } option)
+        {
+            option.IsChecked = !option.IsChecked;
+        }
+    }
+
+    /// <summary>
+    /// Task 52: Ctrl+A checks every selectable row.
+    /// </summary>
+    [RelayCommand]
+    private void SelectAll()
+    {
+        foreach (var option in Options.Where(o => o.IsSelectable))
+        {
+            option.IsChecked = true;
+        }
+    }
+
+    /// <summary>
+    /// Task 52: Ctrl+Shift+A unchecks every selectable row.
+    /// </summary>
+    [RelayCommand]
+    private void ClearSelection()
+    {
+        foreach (var option in Options.Where(o => o.IsSelectable))
+        {
+            option.IsChecked = false;
+        }
+    }
 
     public DiscoveryDialogViewModel(
         IReadOnlyList<DiscoveredRepository> candidates,

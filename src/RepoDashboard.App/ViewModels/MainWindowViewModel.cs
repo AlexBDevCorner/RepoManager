@@ -52,6 +52,23 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly CancellationTokenSource _appLifetime = new();
     private readonly IApplicationShutdown? _applicationShutdown;
 
+    /// <summary>
+    /// Task 52 test seam for the Remove confirmation dialog. Production
+    /// shows the existing <see cref="MessageBox"/> confirmation ("files
+    /// will not be deleted"); tests substitute a stub to avoid blocking
+    /// on modal UI. The confirmation itself is unchanged.
+    /// </summary>
+    public Func<RepositoryRowViewModel, bool> ConfirmRemove { get; set; } =
+        DefaultConfirmRemove;
+
+    private static bool DefaultConfirmRemove(RepositoryRowViewModel row) =>
+        MessageBox.Show(
+            $"Remove {row.Name} from Repo Dashboard?\n\n" +
+            "The repository and its files will not be deleted.",
+            "Repo Dashboard",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question) == MessageBoxResult.Yes;
+
     public ObservableCollection<RepositoryRowViewModel> Repositories { get; } = [];
 
     [ObservableProperty]
@@ -276,6 +293,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var configurations = await _dashboard.LoadConfigurationsAsync(
                 operation.Token);
 
+            var previousSelectionId =
+                SelectedRepository?.RepositoryId;
+
             Repositories.Clear();
 
             foreach (var configuration in configurations)
@@ -283,6 +303,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 Repositories.Add(
                     RepositoryRowViewModel.FromConfiguration(configuration));
             }
+
+            RestoreSelection(previousSelectionId);
 
             NotifyOrderingCommands();
 
@@ -437,6 +459,28 @@ public sealed partial class MainWindowViewModel : ObservableObject
     }
 
     /// <summary>
+    /// Task 52: establishes a useful selection after a full reload so
+    /// keyboard shortcuts (F5 / F6 / Enter / F2) are immediately usable.
+    /// Preserves the previous repository when it still exists, otherwise
+    /// selects the first row. Empty dashboards leave no selection.
+    /// </summary>
+    private void RestoreSelection(Guid? repositoryId)
+    {
+        if (Repositories.Count == 0)
+        {
+            SelectedRepository = null;
+            return;
+        }
+
+        SelectedRepository =
+            repositoryId is Guid id
+                ? Repositories.FirstOrDefault(
+                      repository => repository.RepositoryId == id)
+                  ?? Repositories[0]
+                : Repositories[0];
+    }
+
+    /// <summary>
     /// Guards direct invocations (commands bypass <c>CanExecute</c> when
     /// executed programmatically); the UI additionally disables the button.
     /// </summary>
@@ -486,6 +530,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var repositories =
                 await _dashboard.LoadAsync(operation.Token);
 
+            var previousSelectionId =
+                SelectedRepository?.RepositoryId;
+
             Repositories.Clear();
 
             foreach (var repository in repositories)
@@ -493,6 +540,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 Repositories.Add(
                     new RepositoryRowViewModel(repository));
             }
+
+            RestoreSelection(previousSelectionId);
 
             StatusText = Repositories.Count == 0
                 ? "No repositories yet. Use Add Repository to get started."
@@ -1325,17 +1374,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        var confirmation = MessageBox.Show(
-            $"Remove {selected.Name} from Repo Dashboard?\n\n" +
-            "The repository and its files will not be deleted.",
-            "Repo Dashboard",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Question);
-
-        if (confirmation != MessageBoxResult.Yes)
+        if (!ConfirmRemove(selected))
         {
             return;
         }
+
+        // Task 52: capture the index before removal so keyboard workflows
+        // keep a sensible selection afterwards (next row, or previous row
+        // when the last one was removed).
+        var removedIndex =
+            Repositories.IndexOf(selected);
 
         var operation = BeginOperation(cancellationToken);
         IsBusy = true;
@@ -1346,6 +1394,15 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 selected.RepositoryId, operation.Token);
 
             Repositories.Remove(selected);
+
+            SelectedRepository =
+                Repositories.Count == 0
+                    ? null
+                    : Repositories[
+                        Math.Min(
+                            removedIndex,
+                            Repositories.Count - 1)];
+
             StatusText = $"Removed '{selected.Name}'.";
             NotifyOrderingCommands();
         }
