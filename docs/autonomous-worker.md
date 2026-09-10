@@ -24,18 +24,29 @@ Inputs:
 | `control_commit` | ❌ | `""` (default branch HEAD) | Pin a control commit for reproducibility |
 | `model` | ❌ | `opencode-go/kimi-k3` | OpenCode model (`provider/model`) |
 
-Prerequisites: the `opencode-agent` GitHub App installed on this repository
-and the `OPENCODE_API_KEY` (OpenCode Go subscription) repository secret.
+Prerequisites: the `opencode-agent` GitHub App installed on this repository,
+the `OPENCODE_API_KEY` (OpenCode Go subscription) repository secret, and a
+`CONTROL_REPO_TOKEN` secret. The control repository is private and a
+workflow's `github.token` cannot read other repositories, so control checkout
+authenticates with `CONTROL_REPO_TOKEN`: a fine-grained PAT with Contents:
+Read on the control repository only.
 
 What a run does:
 
 1. `guard` — refuses to start while a *different* autonomous task has an open
-   PR (single-active-task rule). Re-dispatching the *same* task is allowed.
+   PR (single-active-task rule). A PR counts as autonomous when it carries
+   the `autonomous` label **or** its head branch starts with `autonomous/`.
+   Re-dispatching the *same* task (`autonomous/<TASK-ID>` still open) is
+   allowed as the retry path.
 2. `worker` — checks out this repo plus the control repo (read-only
-   `control/`), sets up .NET 10, ensures labels, runs OpenCode with the
-   stable wrapper prompt, then deterministically enforces PR metadata.
-3. The workflow fails if no open PR exists on `autonomous/<TASK-ID>` at the
-   end — a run without a PR is a failed run.
+   `control/`), deterministically validates the task identity (spec file
+   exists, file name and front-matter `id` equal `task_id`, the spec's
+   project maps to this repository), records the exact control SHA, sets up
+   .NET 10, ensures labels, runs OpenCode with the stable wrapper prompt,
+   then strictly verifies PR metadata.
+3. The workflow fails if there is not exactly one open PR on
+   `autonomous/<TASK-ID>` targeting `master` at the end — a run without a
+   PR, with several, or with missing evidence sections is a failed run.
 
 ## Autonomous PR metadata (step 9)
 
@@ -49,11 +60,16 @@ Every worker-created PR is identifiable and machine-linkable
 - Body sections (all required):
   `## Task`, `## Control specification`, `## Implementation`,
   `## Verification`, `## Autonomous execution`.
-  `## Verification` quotes exact build/test commands + results;
+  `## Control specification` records the pinned spec,
+  `<control-repo>@<sha>: <task-path>`, so every PR is traceable to the exact
+  control commit it implemented. `## Verification` quotes exact build/test
+  commands + real results (invented results fail review);
   `## Autonomous execution` states OpenCode Go + model.
 
 The prompt instructs the agent to follow this contract; the final workflow
-step re-checks title/labels/body headers and repairs them when needed.
+step repairs the title prefix and labels automatically but never invents
+body evidence — a PR missing any required section, the pinned SHA, or the
+`master` base fails the run.
 
 ## Single active task (step 10)
 
@@ -72,7 +88,7 @@ Effect: RepoManager can never implement two autonomous tasks simultaneously.
 
 ## Review-fix loop (preview of step 15)
 
-Reviewers Alfredo (human) or ChatGPT request changes on the PR; a trusted
+Reviewers (human or ChatGPT) request changes on the PR; a trusted
 actor posts `/oc …` with the findings and the `opencode` workflow updates the
 same PR (same branch, no second PR). Only `OWNER`/`MEMBER`/`COLLABORATOR`
 comments trigger it. Full round caps arrive with step 16.

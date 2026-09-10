@@ -108,7 +108,11 @@ dotnet run --project src/RepoDashboard.App
   (create the `task:<TASK-ID>` label if missing).
 - PR body MUST contain: `## Task`, `## Control specification`,
   `## Implementation`, `## Verification`, `## Autonomous execution`.
-  `## Verification` quotes the exact build/test commands and their results.
+  `## Task` holds the task ID. `## Control specification` holds the pinned
+  spec `<control-repo>@<sha>: <task-path>` (the workflow tells you the exact
+  line — copy it verbatim).
+  `## Verification` quotes the exact build/test commands and their real
+  results — never invent results.
   `## Autonomous execution` states the OpenCode Go model used.
 - Never merge the PR, never force-push, never commit secrets.
 

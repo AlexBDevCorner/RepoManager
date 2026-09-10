@@ -9,7 +9,12 @@
 #     -f task_path=projects/repomanager/tasks/RM-001.md
 #
 # Prerequisites (step 7): the `opencode-agent` GitHub App installed on this
-# repository, and the `OPENCODE_API_KEY` (OpenCode Go) repository secret.
+# repository, the `OPENCODE_API_KEY` (OpenCode Go) repository secret, and a
+# `CONTROL_REPO_TOKEN` secret. The control repository is private and the
+# workflow's `github.token` is scoped to THIS repository only, so the control
+# checkout steps below authenticate with `CONTROL_REPO_TOKEN`: a fine-grained
+# PAT with Contents: Read access to the control repository and nothing else.
+# (Later this can become a dedicated GitHub App token instead of a PAT.)
 #
 # Step 10 — single-active-task protection (target-side half): the
 # `concurrency` group below allows only one autonomous implementation at a
@@ -69,10 +74,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Filter client-side so a not-yet-created `autonomous` label can't fail us.
-          BLOCKERS=$(gh pr list --state open \
+          # A PR counts as autonomous when it carries the `autonomous` label
+          # OR its head branch starts with `autonomous/` — the branch check
+          # closes the hole where a run created the branch/PR but failed
+          # before the metadata step could attach labels. Filter client-side
+          # so a not-yet-created label can't fail us. Only the current task's
+          # own branch is exempt (retry path).
+          BLOCKERS=$(gh pr list --state open --limit 100 \
             --json number,title,headRefName,labels \
-            --jq '[.[] | select(((.labels // []) | map(.name) | index("autonomous")) and .headRefName != ("autonomous/" + env.TASK_ID))]')
+            --jq '[.[] | select((.headRefName | startswith("autonomous/")) or ((.labels // []) | map(.name) | index("autonomous"))) | select(.headRefName != ("autonomous/" + env.TASK_ID))]')
           COUNT=$(printf '%s' "$BLOCKERS" | jq 'length')
           if [ "$COUNT" -gt 0 ]; then
             echo "::error::Another autonomous task is already open in this repository:"
@@ -99,6 +109,7 @@ jobs:
         with:
           repository: ${{ inputs.control_repo }}
           ref: ${{ inputs.control_commit }}
+          token: ${{ secrets.CONTROL_REPO_TOKEN }}
           path: control
           fetch-depth: 1
           persist-credentials: false
@@ -108,9 +119,49 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: ${{ inputs.control_repo }}
+          token: ${{ secrets.CONTROL_REPO_TOKEN }}
           path: control
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Validate task identity (deterministic pre-check)
+        env:
+          TASK_ID: ${{ inputs.task_id }}
+          TASK_PATH: ${{ inputs.task_path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Never hand OpenCode a mismatched id/path pair (e.g. task_id=RM-001
+          # with RM-002's spec). A manual typo must fail here, not in the agent.
+          case "$TASK_PATH" in
+            projects/*/tasks/*.md) ;;
+            *)
+              echo "::error::task_path must look like projects/<project>/tasks/<ID>.md, got: $TASK_PATH"
+              exit 1
+              ;;
+          esac
+          SPEC="control/$TASK_PATH"
+          [ -f "$SPEC" ] || { echo "::error::Task spec not found: $SPEC"; exit 1; }
+          [ "$(basename "$TASK_PATH")" = "$TASK_ID.md" ] || { echo "::error::task_path file name must be $TASK_ID.md, got: $TASK_PATH"; exit 1; }
+          SPEC_ID=$(awk '/^---$/{c++; next} c==1 && /^id:/{sub(/^id:[ \t]*/,""); gsub(/["\r]/,""); print; exit}' "$SPEC")
+          [ "$SPEC_ID" = "$TASK_ID" ] || { echo "::error::Spec front-matter id ($SPEC_ID) != task_id ($TASK_ID)"; exit 1; }
+          PROJ=$(printf '%s' "$TASK_PATH" | cut -d/ -f2)
+          PROJ_FILE="control/projects/$PROJ/project.yaml"
+          [ -f "$PROJ_FILE" ] || { echo "::error::Project file not found: $PROJ_FILE"; exit 1; }
+          PROJ_REPO=$(awk '/^repository:/{sub(/^repository:[ \t]*/,""); gsub(/["\r]/,""); print; exit}' "$PROJ_FILE")
+          [ "$PROJ_REPO" = "$GITHUB_REPOSITORY" ] || { echo "::error::Project $PROJ maps to $PROJ_REPO, not this repository ($GITHUB_REPOSITORY)"; exit 1; }
+          echo "Task identity OK: $TASK_ID from $TASK_PATH (project $PROJ)."
+
+      - name: Record control SHA
+        env:
+          CONTROL_REPO: ${{ inputs.control_repo }}
+          TASK_PATH: ${{ inputs.task_path }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          CONTROL_SHA=$(git -C control rev-parse HEAD)
+          echo "CONTROL_SHA=$CONTROL_SHA" >> "$GITHUB_ENV"
+          echo "Pinned control spec: $CONTROL_REPO@$CONTROL_SHA — $TASK_PATH"
 
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
@@ -165,11 +216,14 @@ jobs:
               ## Verification
               ## Autonomous execution
               Under ## Task put the task ID. Under ## Control specification
-              put `${{ inputs.control_repo }}: ${{ inputs.task_path }}`.
+              put exactly one line in pinned form:
+              `${{ inputs.control_repo }}@${{ env.CONTROL_SHA }}: ${{ inputs.task_path }}`
               Under ## Autonomous execution state `OpenCode Go` and the model
               `${{ inputs.model }}`.
             - Run required verification and quote the exact commands and
-              their results under ## Verification:
+              their results under ## Verification. Never invent results:
+              only report commands you actually ran and their real output.
+              Required commands:
                 dotnet build RepoDashboard.slnx
                 dotnet test RepoDashboard.slnx
             - Add/update xUnit + FluentAssertions tests for every behavior change.
@@ -179,21 +233,33 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TASK_ID: ${{ inputs.task_id }}
-          TASK_PATH: ${{ inputs.task_path }}
-          CONTROL_REPO: ${{ inputs.control_repo }}
-          MODEL: ${{ inputs.model }}
+          CONTROL_SHA: ${{ env.CONTROL_SHA }}
         shell: bash
         run: |
           set -euo pipefail
           BRANCH="autonomous/$TASK_ID"
-          PR=$(gh pr list --head "$BRANCH" --state open \
-            --json number,title,body --jq '.[0]')
-          if [ -z "$PR" ] || [ "$PR" = "null" ]; then
+          # Exactly one open PR must exist for the branch: zero means the
+          # worker produced nothing, more than one means it ignored the
+          # one-PR rule. Both fail the run.
+          COUNT=$(gh pr list --head "$BRANCH" --state open --json number --jq 'length')
+          if [ "$COUNT" -eq 0 ]; then
             echo "::error::No open PR found for branch $BRANCH — the worker must produce a branch and a PR."
             exit 1
           fi
-          NUM=$(printf '%s' "$PR" | jq -r '.number')
+          if [ "$COUNT" -gt 1 ]; then
+            echo "::error::$COUNT open PRs found for branch $BRANCH — exactly one is allowed."
+            exit 1
+          fi
+          NUM=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number')
+          PR=$(gh pr view "$NUM" --json title,body,baseRefName)
           TITLE=$(printf '%s' "$PR" | jq -r '.title')
+          BODY=$(printf '%s' "$PR" | jq -r '.body')
+          BASE=$(printf '%s' "$PR" | jq -r '.baseRefName')
+          if [ "$BASE" != "master" ]; then
+            echo "::error::PR #$NUM targets '$BASE' — autonomous PRs must target master."
+            exit 1
+          fi
+          # Title and labels are safe to repair automatically.
           case "$TITLE" in
             "[$TASK_ID]"*) ;;
             *)
@@ -202,18 +268,19 @@ jobs:
               ;;
           esac
           gh pr edit "$NUM" --add-label "autonomous,autonomous:opencode,task:$TASK_ID"
-          BODY=$(gh pr view "$NUM" --json body --jq '.body')
-          if ! printf '%s' "$BODY" | grep -q '^## Task'; then
-            HEADER="## Task
-          $TASK_ID
-
-          ## Control specification
-          $CONTROL_REPO — $TASK_PATH
-
-          ## Autonomous execution
-          OpenCode Go ($MODEL) via autonomous-worker.yml
-          "
-            printf '%s\n%s' "$HEADER" "$BODY" | gh pr edit "$NUM" --body-file -
-            echo "Prepended missing metadata headers."
+          # Body evidence is NOT repaired: missing sections mean the agent did
+          # not do (or did not report) the work, so the run fails instead of
+          # inventing verification results.
+          MISSING=""
+          for H in "Task" "Control specification" "Implementation" "Verification" "Autonomous execution"; do
+            printf '%s' "$BODY" | grep -q "^## $H" || MISSING="$MISSING [$H]"
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::PR #$NUM body is missing required sections:$MISSING"
+            exit 1
+          fi
+          if ! printf '%s' "$BODY" | grep -q "$CONTROL_SHA"; then
+            echo "::error::PR #$NUM body must record the pinned control SHA $CONTROL_SHA under ## Control specification."
+            exit 1
           fi
           echo "PR #$NUM metadata OK."
