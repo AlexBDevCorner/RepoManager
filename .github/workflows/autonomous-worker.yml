@@ -1,0 +1,219 @@
+# Autonomous worker (AutonomousWork steps 8-10).
+#
+# Manually dispatch ONE control-repo task for OpenCode (Go subscription) to
+# implement in this repository. No dispatcher calls this yet (step 11) — run
+# it from the Actions tab or via:
+#
+#   gh workflow run autonomous-worker.yml \
+#     -f task_id=RM-001 \
+#     -f task_path=projects/repomanager/tasks/RM-001.md
+#
+# Prerequisites (step 7): the `opencode-agent` GitHub App installed on this
+# repository, and the `OPENCODE_API_KEY` (OpenCode Go) repository secret.
+#
+# Step 10 — single-active-task protection (target-side half): the
+# `concurrency` group below allows only one autonomous implementation at a
+# time in THIS repository (queued runs wait, they never overlap). Each target
+# repository has its own group, so RepoManager and MandarinBotNet still run
+# concurrently. The `guard` job + the future dispatcher provide the other
+# half: never start new work while an `autonomous` PR is still open.
+
+name: autonomous-worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_id:
+        description: "Control-repo task ID (e.g. RM-001)"
+        required: true
+        type: string
+      task_path:
+        description: "Task spec path inside the control repo (e.g. projects/repomanager/tasks/RM-001.md)"
+        required: true
+        type: string
+      control_repo:
+        description: "Control repository (Owner/Repo)"
+        required: true
+        default: "AlexBDevCorner/AutonomousWork"
+        type: string
+      control_commit:
+        description: "Control repo commit SHA (empty = default branch HEAD)"
+        required: false
+        default: ""
+        type: string
+      model:
+        description: "OpenCode model (provider/model)"
+        required: false
+        default: "opencode-go/kimi-k3"
+        type: string
+
+concurrency:
+  group: autonomous-worker
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  guard:
+    name: single-active-task guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if another autonomous task is already open
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TASK_ID: ${{ inputs.task_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Filter client-side so a not-yet-created `autonomous` label can't fail us.
+          BLOCKERS=$(gh pr list --state open \
+            --json number,title,headRefName,labels \
+            --jq '[.[] | select(((.labels // []) | map(.name) | index("autonomous")) and .headRefName != ("autonomous/" + env.TASK_ID))]')
+          COUNT=$(printf '%s' "$BLOCKERS" | jq 'length')
+          if [ "$COUNT" -gt 0 ]; then
+            echo "::error::Another autonomous task is already open in this repository:"
+            printf '%s' "$BLOCKERS" | jq -r '.[] | "  #\(.number) \(.title) [\(.headRefName)]"'
+            echo "Merge or close it before dispatching $TASK_ID (single-active-task rule, step 10)."
+            exit 1
+          fi
+          echo "Guard OK: no other open autonomous PR."
+
+  worker:
+    name: implement autonomous task
+    needs: guard
+    runs-on: windows-latest
+    steps:
+      - name: Checkout target repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout control repository at commit
+        if: inputs.control_commit != ''
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.control_repo }}
+          ref: ${{ inputs.control_commit }}
+          path: control
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout control repository at default branch
+        if: inputs.control_commit == ''
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ inputs.control_repo }}
+          path: control
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Ensure autonomous labels exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TASK_ID: ${{ inputs.task_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh label create autonomous \
+            --description "Work produced by the autonomous pipeline" \
+            --color 0E8A16 || true
+          gh label create autonomous:opencode \
+            --description "Implemented by the OpenCode autonomous worker" \
+            --color 1D76DB || true
+          gh label create "task:$TASK_ID" \
+            --description "Autonomous task $TASK_ID" \
+            --color FBCA04 || true
+
+      - name: Run OpenCode worker
+        uses: anomalyco/opencode/github@latest
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        with:
+          model: ${{ inputs.model }}
+          prompt: |
+            Implement autonomous task ${{ inputs.task_id }}.
+
+            The authoritative specification is the read-only file:
+              control/${{ inputs.task_path }}
+            (control repo ${{ inputs.control_repo }}).
+            Read it first; it alone defines completion.
+
+            Rules:
+            - Follow AGENTS.md in the repository root. It is normative.
+            - Implement ONLY this task. Do not implement future tasks.
+              Do not edit anything under control/.
+            - Create branch autonomous/${{ inputs.task_id }} from master.
+              Commit your changes there and open exactly one PR to master.
+              If the branch or its PR already exists (retry), reuse and
+              update it — never open a second PR for the same task.
+            - PR title MUST be: [${{ inputs.task_id }}] <concise description>
+            - PR labels MUST be: autonomous, autonomous:opencode, task:${{ inputs.task_id }}
+            - PR body MUST contain these sections:
+              ## Task
+              ## Control specification
+              ## Implementation
+              ## Verification
+              ## Autonomous execution
+              Under ## Task put the task ID. Under ## Control specification
+              put `${{ inputs.control_repo }}: ${{ inputs.task_path }}`.
+              Under ## Autonomous execution state `OpenCode Go` and the model
+              `${{ inputs.model }}`.
+            - Run required verification and quote the exact commands and
+              their results under ## Verification:
+                dotnet build RepoDashboard.slnx
+                dotnet test RepoDashboard.slnx
+            - Add/update xUnit + FluentAssertions tests for every behavior change.
+            - Never merge the PR. Never force-push. Never commit secrets.
+
+      - name: Enforce autonomous PR metadata (step 9)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TASK_ID: ${{ inputs.task_id }}
+          TASK_PATH: ${{ inputs.task_path }}
+          CONTROL_REPO: ${{ inputs.control_repo }}
+          MODEL: ${{ inputs.model }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="autonomous/$TASK_ID"
+          PR=$(gh pr list --head "$BRANCH" --state open \
+            --json number,title,body --jq '.[0]')
+          if [ -z "$PR" ] || [ "$PR" = "null" ]; then
+            echo "::error::No open PR found for branch $BRANCH — the worker must produce a branch and a PR."
+            exit 1
+          fi
+          NUM=$(printf '%s' "$PR" | jq -r '.number')
+          TITLE=$(printf '%s' "$PR" | jq -r '.title')
+          case "$TITLE" in
+            "[$TASK_ID]"*) ;;
+            *)
+              gh pr edit "$NUM" --title "[$TASK_ID] $TITLE"
+              echo "Fixed title prefix (-> [$TASK_ID] ...)."
+              ;;
+          esac
+          gh pr edit "$NUM" --add-label "autonomous,autonomous:opencode,task:$TASK_ID"
+          BODY=$(gh pr view "$NUM" --json body --jq '.body')
+          if ! printf '%s' "$BODY" | grep -q '^## Task'; then
+            HEADER="## Task
+          $TASK_ID
+
+          ## Control specification
+          $CONTROL_REPO — $TASK_PATH
+
+          ## Autonomous execution
+          OpenCode Go ($MODEL) via autonomous-worker.yml
+          "
+            printf '%s\n%s' "$HEADER" "$BODY" | gh pr edit "$NUM" --body-file -
+            echo "Prepended missing metadata headers."
+          fi
+          echo "PR #$NUM metadata OK."

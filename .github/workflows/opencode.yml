@@ -1,0 +1,46 @@
+# OpenCode comment responder (step 7 integration; step 15 review-fix loop).
+#
+# Reacts to `/oc` / `/opencode` mentions in issue and PR review comments so
+# review findings can be sent back to OpenCode without leaving GitHub:
+#
+#   /oc Address all blocking findings from the latest ChatGPT review.
+#
+# Step 16 (partial runaway protection): only trusted actors — the repository
+# owner, members, and collaborators — may trigger automation. Everyone else's
+# `/oc` mentions are ignored. Round/attempt caps arrive with step 16.
+#
+# Prerequisites: the `opencode-agent` GitHub App installed on this
+# repository, and the `OPENCODE_API_KEY` (OpenCode Go) repository secret.
+
+name: opencode
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+jobs:
+  opencode:
+    if: |
+      (contains(github.event.comment.body, '/oc') ||
+       contains(github.event.comment.body, '/opencode')) &&
+      (github.event.comment.author_association == 'OWNER' ||
+       github.event.comment.author_association == 'MEMBER' ||
+       github.event.comment.author_association == 'COLLABORATOR')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Run OpenCode
+        uses: anomalyco/opencode/github@latest
+        env:
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+        with:
+          model: opencode-go/kimi-k3
