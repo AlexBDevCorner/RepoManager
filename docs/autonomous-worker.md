@@ -41,19 +41,27 @@ What a run does:
 2. `worker` — checks out this repo plus the control repo (read-only
    `control/`), deterministically validates the task identity (spec file
    exists, file name and front-matter `id` equal `task_id`, the spec's
-   project maps to this repository), records the exact control SHA, sets up
-   .NET 10, ensures labels, runs OpenCode with the stable wrapper prompt,
-   then strictly verifies PR metadata.
-3. The workflow fails if there is not exactly one open PR on
-   `autonomous/<TASK-ID>` targeting `master` at the end — a run without a
-   PR, with several, or with missing evidence sections is a failed run.
+   project maps to this repository), then requires control-repo
+   eligibility: `autonomous-work next <project>` at the pinned checkout
+   must select exactly the dispatched task (human-authorized `ready`,
+   dependencies done, project enabled, capacity free — dispatching any
+   other task fails before OpenCode starts). It records the exact control
+   SHA, sets up .NET 8 + 10 (control CLI + target), ensures labels, runs
+   OpenCode with the stable wrapper prompt, then strictly verifies PR
+   metadata.
+3. The workflow fails unless exactly one PR has ever existed on
+   `autonomous/<TASK-ID>` targeting `master` — a run with no PR, several
+   PRs, a redispatch after merge, or missing evidence sections is a failed
+   run. A retry reuses the same PR (reopened automatically when closed).
 
 ## Autonomous PR metadata (step 9)
 
 Every worker-created PR is identifiable and machine-linkable
 (`Task ↔ PR ↔ Repository`):
 
-- Branch: `autonomous/<TASK-ID>` (e.g. `autonomous/RM-001`).
+- Branch: `autonomous/<TASK-ID>` (e.g. `autonomous/RM-001`). At most one PR
+  may ever exist per task branch — retries reuse (and reopen) it, so the
+  `Task ↔ PR ↔ Repository` mapping stays permanent.
 - Title: `[<TASK-ID>] <concise description>` (e.g. `[RM-001] Add …`).
 - Labels: `autonomous`, `autonomous:opencode`, `task:<TASK-ID>`.
   The workflow creates missing labels; the agent applies them.

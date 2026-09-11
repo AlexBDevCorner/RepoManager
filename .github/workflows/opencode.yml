@@ -31,6 +31,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
+      # Explicit: once any permission is set, the rest default to none, and
+      # actions/checkout needs this (the upstream example omits it).
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
