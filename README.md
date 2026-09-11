@@ -99,6 +99,35 @@ For a selected repository you can also:
 
 Most repository actions are also available from the row context menu.
 
+### Keyboard shortcuts
+
+Nearly every toolbar and context-menu action is available from the keyboard. Shortcuts invoke the same commands as the buttons, so disabled actions stay disabled and all Git safety rules still apply.
+
+| Action | Shortcut |
+| --- | --- |
+| Select previous / next repository | `Up` / `Down` |
+| First / last repository | `Home` / `End` |
+| Add repositories | `Ctrl+N` |
+| Discover repositories | `Ctrl+Shift+N` |
+| Rename repository | `F2` |
+| Move repository up / down | `Alt+Up` / `Alt+Down` |
+| Remove from dashboard | `Delete` |
+| Refresh selected | `F5` |
+| Refresh all | `Shift+F5` |
+| Fetch selected | `F6` |
+| Fetch all | `Shift+F6` |
+| Update selected | `Ctrl+F7` |
+| Update safe repositories | `Ctrl+Shift+F7` |
+| Cancel running operation | `Esc` |
+| Open repository folder | `Enter` |
+| Open terminal | `Ctrl+Enter` |
+| Copy repository path | `Ctrl+Shift+C` |
+| Keyboard shortcut reference | `F1` |
+
+`Update` requires `Ctrl` because, unlike refresh and fetch, it can modify the checked-out branch. Shortcuts are shown in context menus and toolbar tooltips; press `F1` in the application for the grouped reference.
+
+In the discovery dialog: `Up` / `Down` chooses a repository, `Space` toggles it, `Ctrl+A` selects all available repositories, `Ctrl+Shift+A` clears the selection, `Enter` confirms and `Esc` cancels.
+
 ### Cancellation and shutdown safety
 
 Long-running batch operations can be cancelled.

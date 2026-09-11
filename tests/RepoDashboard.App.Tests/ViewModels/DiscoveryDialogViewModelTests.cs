@@ -69,4 +69,123 @@ public sealed class DiscoveryDialogViewModelTests
 
         sut.SelectedPaths.Should().BeEmpty();
     }
+
+    [Fact]
+    public void ToggleSelected_flips_highlighted_selectable_option()
+    {
+        // Task 52: Space toggles the ListBox-selected row.
+        var sut = new DiscoveryDialogViewModel(
+            [Repo("Store")],
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+        sut.SelectedOption = sut.Options.Single();
+
+        sut.ToggleSelectedCommand.CanExecute(null).Should().BeTrue();
+        sut.ToggleSelectedCommand.Execute(null);
+
+        sut.Options.Single().IsChecked.Should().BeFalse();
+        sut.SelectedPaths.Should().BeEmpty();
+
+        sut.ToggleSelectedCommand.Execute(null);
+
+        sut.Options.Single().IsChecked.Should().BeTrue();
+    }
+
+    [Fact]
+    public void ToggleSelected_is_disabled_without_selectable_highlight()
+    {
+        var sut = new DiscoveryDialogViewModel(
+            [Repo("Store"), Repo("Viewer")],
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                """C:\Source\Repos\Store"""
+            });
+
+        // Review #15: constructor preselects the first selectable row
+        // (Viewer), so clear it first to cover the nothing-highlighted case.
+        sut.SelectedOption = null;
+        sut.ToggleSelectedCommand.CanExecute(null).Should().BeFalse(
+            "nothing is highlighted");
+
+        sut.SelectedOption = sut.Options.First(o => o.Name == "Store");
+        sut.ToggleSelectedCommand.CanExecute(null).Should().BeFalse(
+            "already-tracked rows are not selectable");
+
+        // Disabled command must not flip anything even if executed.
+        sut.ToggleSelectedCommand.Execute(null);
+        sut.Options.First(o => o.Name == "Store").IsChecked.Should().BeFalse();
+    }
+
+    [Fact]
+    public void Constructor_preselects_first_selectable_option()
+    {
+        // Review #15: Discovery must open with a sensible highlight so
+        // Space / arrows / Ctrl+A work immediately.
+        var sut = new DiscoveryDialogViewModel(
+            [Repo("Store"), Repo("Viewer")],
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                """C:\Source\Repos\Store"""
+            });
+
+        sut.SelectedOption.Should().Be(sut.Options.First(o => o.Name == "Viewer"));
+        sut.ToggleSelectedCommand.CanExecute(null).Should().BeTrue();
+    }
+
+    [Fact]
+    public void Constructor_falls_back_to_first_option_when_all_tracked()
+    {
+        var sut = new DiscoveryDialogViewModel(
+            [Repo("Store")],
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                """C:\Source\Repos\Store"""
+            });
+
+        sut.SelectedOption.Should().Be(sut.Options.Single());
+        sut.ToggleSelectedCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Constructor_leaves_no_highlight_when_empty()
+    {
+        var sut = new DiscoveryDialogViewModel(
+            [],
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+        sut.SelectedOption.Should().BeNull();
+        sut.ToggleSelectedCommand.CanExecute(null).Should().BeFalse();
+    }
+
+    [Fact]
+    public void SelectAll_checks_only_selectable_options()
+    {
+        // Task 52: Ctrl+A respects IsSelectable — duplicates stay out.
+        var sut = new DiscoveryDialogViewModel(
+            [Repo("Store"), Repo("Viewer")],
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                """C:\Source\Repos\Store"""
+            });
+        sut.Options.First(o => o.Name == "Viewer").IsChecked = false;
+
+        sut.SelectAllCommand.Execute(null);
+
+        sut.Options.First(o => o.Name == "Viewer").IsChecked.Should().BeTrue();
+        sut.Options.First(o => o.Name == "Store").IsChecked.Should().BeFalse();
+        sut.SelectedPaths.Should().BeEquivalentTo("""C:\Source\Repos\Viewer""");
+    }
+
+    [Fact]
+    public void ClearSelection_unchecks_only_selectable_options()
+    {
+        // Task 52: Ctrl+Shift+A clears available rows, never tracked ones.
+        var sut = new DiscoveryDialogViewModel(
+            [Repo("Store"), Repo("Viewer")],
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+
+        sut.ClearSelectionCommand.Execute(null);
+
+        sut.Options.Should().OnlyContain(o => !o.IsChecked);
+        sut.SelectedPaths.Should().BeEmpty();
+    }
 }

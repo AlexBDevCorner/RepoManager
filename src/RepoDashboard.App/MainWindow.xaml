@@ -9,61 +9,138 @@
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
     </Window.Resources>
+    <Window.CommandBindings>
+        <!-- Task 53: F1 opens the keyboard shortcut reference. A routed
+             Help command keeps help-dialog state out of MainWindowViewModel:
+             opening a purely visual window is a view responsibility. -->
+        <CommandBinding Command="ApplicationCommands.Help"
+                        Executed="Help_Executed" />
+    </Window.CommandBindings>
+    <Window.InputBindings>
+        <!-- Task 51: keyboard shortcuts invoke the existing commands
+             directly — no duplicated Git, persistence, safety, or
+             selection logic. No CommandParameter on purpose: a null
+             parameter means "use the selection", matching toolbar
+             buttons. Context-menu items keep passing the right-clicked
+             row explicitly. CanExecute (IsBusy, Git availability,
+             selection) therefore applies equally to shortcuts. -->
+        <!-- Repository management -->
+        <KeyBinding Gesture="Ctrl+N"
+                    Command="{Binding AddCommand}" />
+        <KeyBinding Gesture="Ctrl+Shift+N"
+                    Command="{Binding DiscoverCommand}" />
+        <KeyBinding Gesture="F2"
+                    Command="{Binding RenameCommand}" />
+        <KeyBinding Gesture="Alt+Up"
+                    Command="{Binding MoveUpCommand}" />
+        <KeyBinding Gesture="Alt+Down"
+                    Command="{Binding MoveDownCommand}" />
+        <KeyBinding Gesture="Delete"
+                    Command="{Binding RemoveCommand}" />
+        <!-- Git inspection / synchronization -->
+        <KeyBinding Gesture="F5"
+                    Command="{Binding RefreshCommand}" />
+        <KeyBinding Gesture="Shift+F5"
+                    Command="{Binding RefreshAllCommand}" />
+        <KeyBinding Gesture="F6"
+                    Command="{Binding FetchCommand}" />
+        <KeyBinding Gesture="Shift+F6"
+                    Command="{Binding FetchAllCommand}" />
+        <!-- Ctrl is required for Update: unlike Refresh/Fetch it can
+             modify the checked-out branch, so it must be harder to hit
+             accidentally. Both go through the existing safe-update
+             commands — no second code path around fast-forward rules. -->
+        <KeyBinding Gesture="Ctrl+F7"
+                    Command="{Binding UpdateCommand}" />
+        <KeyBinding Gesture="Ctrl+Shift+F7"
+                    Command="{Binding UpdateAllCommand}" />
+        <!-- Utility actions -->
+        <KeyBinding Gesture="Escape"
+                    Command="{Binding CancelCommand}" />
+        <KeyBinding Gesture="Enter"
+                    Command="{Binding OpenFolderCommand}" />
+        <KeyBinding Gesture="Ctrl+Enter"
+                    Command="{Binding OpenTerminalCommand}" />
+        <KeyBinding Gesture="Ctrl+Shift+C"
+                    Command="{Binding CopyPathCommand}" />
+        <!-- Task 53: shortcut reference. InputGestureText is display-only;
+             this binding is the functional source. -->
+        <KeyBinding Gesture="F1"
+                    Command="ApplicationCommands.Help" />
+    </Window.InputBindings>
     <DockPanel>
         <ToolBar DockPanel.Dock="Top">
+            <!-- Task 53: tooltips expose shortcuts so mouse users discover
+                 the keyboard interface gradually. -->
             <Button Content="+ Add Repository"
                     Command="{Binding AddCommand}"
+                    ToolTip="Add repositories (Ctrl+N)"
                     Margin="4,0" />
             <Button Content="Discover Repositories..."
                     Command="{Binding DiscoverCommand}"
+                    ToolTip="Discover repositories (Ctrl+Shift+N)"
                     Margin="4,0" />
             <Separator />
             <Button Content="Rename"
                     Command="{Binding RenameCommand}"
+                    ToolTip="Rename repository (F2)"
                     Margin="4,0" />
             <Button Content="Move Up"
                     Command="{Binding MoveUpCommand}"
+                    ToolTip="Move repository up (Alt+Up)"
                     Margin="4,0" />
             <Button Content="Move Down"
                     Command="{Binding MoveDownCommand}"
+                    ToolTip="Move repository down (Alt+Down)"
                     Margin="4,0" />
             <Button Content="Remove from dashboard"
                     Command="{Binding RemoveCommand}"
+                    ToolTip="Remove from dashboard (Delete)"
                     Margin="4,0" />
             <Separator />
             <Button Content="Refresh"
                     Command="{Binding RefreshCommand}"
+                    ToolTip="Refresh selected repository (F5)"
                     Margin="4,0" />
             <Button Content="Refresh All"
                     Command="{Binding RefreshAllCommand}"
+                    ToolTip="Refresh all repositories (Shift+F5)"
                     Margin="4,0" />
             <Separator />
             <Button Content="Fetch"
                     Command="{Binding FetchCommand}"
+                    ToolTip="Fetch selected repository (F6)"
                     Margin="4,0" />
             <Button Content="Fetch All"
                     Command="{Binding FetchAllCommand}"
+                    ToolTip="Fetch all repositories (Shift+F6)"
                     Margin="4,0" />
             <Separator />
             <Button Content="Update"
                     Command="{Binding UpdateCommand}"
+                    ToolTip="Update selected repository (Ctrl+F7)"
                     Margin="4,0" />
             <Button Content="Update Safe Repositories"
                     Command="{Binding UpdateAllCommand}"
+                    ToolTip="Update all safe repositories (Ctrl+Shift+F7)"
                     Margin="4,0" />
             <Separator />
             <Button Content="Cancel"
                     Command="{Binding CancelCommand}"
+                    ToolTip="Cancel running operation (Esc)"
                     Margin="4,0" />
             <Separator />
             <Button Content="Open Folder"
                     Command="{Binding OpenFolderCommand}"
+                    ToolTip="Open repository folder (Enter)"
                     Margin="4,0" />
             <Button Content="Open Terminal"
                     Command="{Binding OpenTerminalCommand}"
+                    ToolTip="Open terminal (Ctrl+Enter)"
                     Margin="4,0" />
             <Button Content="Copy Path"
                     Command="{Binding CopyPathCommand}"
+                    ToolTip="Copy repository path (Ctrl+Shift+C)"
                     Margin="4,0" />
         </ToolBar>
 
@@ -194,12 +271,13 @@
              must stay disabled: a sorted view would show positions that
              differ from the ObservableCollection indexes Move Up/Down
              persist, silently saving an order the user never saw. -->
-        <DataGrid ItemsSource="{Binding Repositories}"
-                   SelectedItem="{Binding SelectedRepository, Mode=TwoWay}"
-                   AutoGenerateColumns="False"
-                   IsReadOnly="True"
-                   SelectionMode="Single"
-                   CanUserSortColumns="False">
+        <DataGrid x:Name="RepositoryGrid"
+                  ItemsSource="{Binding Repositories}"
+                  SelectedItem="{Binding SelectedRepository, Mode=TwoWay}"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  SelectionMode="Single"
+                  CanUserSortColumns="False">
             <DataGrid.RowStyle>
                 <!-- Per-repository menu: commands come from the main view
                      model stashed in the row's Tag (resolved while the row
@@ -216,56 +294,69 @@
                                     RelativeSource={RelativeSource AncestorType=DataGrid}}" />
                     <Setter Property="ContextMenu">
                         <Setter.Value>
+                            <!-- Task 53: InputGestureText is display-only; the
+                                 Window.InputBindings from Task 51 remain the
+                                 functional source. -->
                             <ContextMenu>
                                 <MenuItem Header="Refresh"
+                                          InputGestureText="F5"
                                           Command="{Binding PlacementTarget.Tag.RefreshCommand,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                           CommandParameter="{Binding PlacementTarget.DataContext,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <MenuItem Header="Fetch"
+                                          InputGestureText="F6"
                                           Command="{Binding PlacementTarget.Tag.FetchCommand,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                           CommandParameter="{Binding PlacementTarget.DataContext,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <MenuItem Header="Update"
+                                          InputGestureText="Ctrl+F7"
                                           Command="{Binding PlacementTarget.Tag.UpdateCommand,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                           CommandParameter="{Binding PlacementTarget.DataContext,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <Separator />
                                 <MenuItem Header="Open Folder"
+                                          InputGestureText="Enter"
                                           Command="{Binding PlacementTarget.Tag.OpenFolderCommand,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                           CommandParameter="{Binding PlacementTarget.DataContext,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <MenuItem Header="Open Terminal"
+                                          InputGestureText="Ctrl+Enter"
                                           Command="{Binding PlacementTarget.Tag.OpenTerminalCommand,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                           CommandParameter="{Binding PlacementTarget.DataContext,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <MenuItem Header="Copy Path"
+                                          InputGestureText="Ctrl+Shift+C"
                                           Command="{Binding PlacementTarget.Tag.CopyPathCommand,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                           CommandParameter="{Binding PlacementTarget.DataContext,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <Separator />
                                 <MenuItem Header="Rename..."
+                                          InputGestureText="F2"
                                           Command="{Binding PlacementTarget.Tag.RenameCommand,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                           CommandParameter="{Binding PlacementTarget.DataContext,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <MenuItem Header="Move Up"
+                                          InputGestureText="Alt+Up"
                                           Command="{Binding PlacementTarget.Tag.MoveUpCommand,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                           CommandParameter="{Binding PlacementTarget.DataContext,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <MenuItem Header="Move Down"
+                                          InputGestureText="Alt+Down"
                                           Command="{Binding PlacementTarget.Tag.MoveDownCommand,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                           CommandParameter="{Binding PlacementTarget.DataContext,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
                                 <Separator />
                                 <MenuItem Header="Remove from dashboard"
+                                          InputGestureText="Delete"
                                           Command="{Binding PlacementTarget.Tag.RemoveCommand,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                           CommandParameter="{Binding PlacementTarget.DataContext,

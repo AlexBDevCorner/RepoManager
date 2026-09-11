@@ -139,8 +139,18 @@ public sealed class MainWindowViewModelTests
 
         public Task RemoveAsync(
             Guid repositoryId,
-            CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
+            CancellationToken cancellationToken)
+        {
+            var removed = _items.RemoveAll(i => i.Configuration.Id == repositoryId);
+
+            if (removed == 0)
+            {
+                throw new KeyNotFoundException(
+                    $"Repository '{repositoryId}' is not on the dashboard.");
+            }
+
+            return Task.CompletedTask;
+        }
 
         public Task<RepositoryConfiguration> RenameAsync(
             Guid repositoryId,
@@ -222,6 +232,11 @@ public sealed class MainWindowViewModelTests
             Calls++;
             return name;
         }
+    }
+
+    private sealed class FixedRemovalConfirmation(bool confirmed) : IRepositoryRemovalConfirmationService
+    {
+        public bool ConfirmRemoval(string repositoryName, string repositoryPath) => confirmed;
     }
 
     private static RepositoryDashboardItem Item(string name)
@@ -487,13 +502,20 @@ public sealed class MainWindowViewModelTests
             new FakeGitEnvironment(), dashboard, new CancelledPicker());
         await sut.InitializeAsync();
 
-        sut.HasSelection.Should().BeFalse();
-        sut.SelectedRepository = sut.Repositories[0];
-
+        // Task 52: first row is auto-selected so keyboard shortcuts work
+        // immediately after startup.
         sut.HasSelection.Should().BeTrue();
+        sut.SelectedRepository.Should().Be(sut.Repositories[0]);
+
         sut.SelectedRepository!.DetailsPath.Should()
             .Be("""C:\Source\Repos\Store""");
         sut.SelectedRepository.DetailsRemote.Should().Be("origin");
+
+        sut.SelectedRepository = null;
+        sut.HasSelection.Should().BeFalse();
+
+        sut.SelectedRepository = sut.Repositories[0];
+        sut.HasSelection.Should().BeTrue();
     }
 
     [Fact]
@@ -687,6 +709,10 @@ public sealed class MainWindowViewModelTests
             repositoryNameDialog: new FixedNameDialog("Renamed"));
         await sut.InitializeAsync();
 
+        // Task 52: first row is auto-selected after load.
+        sut.RenameCommand.CanExecute(null).Should().BeTrue();
+
+        sut.SelectedRepository = null;
         sut.RenameCommand.CanExecute(null).Should().BeFalse();
 
         sut.SelectedRepository = sut.Repositories[0];
@@ -745,5 +771,101 @@ public sealed class MainWindowViewModelTests
         dashboard.MoveCalls.Should().Be(1);
         dashboard.LoadCalls.Should().Be(
             0, "no Git inspection may run without Git");
+    }
+
+    [Fact]
+    public async Task Initialize_selects_first_repository_for_keyboard_use()
+    {
+        // Task 52: launch → grid focused (view) + first row selected
+        // (view model) so F5 / F6 / Enter / F2 are immediately useful.
+        var dashboard = new FakeDashboard([Item("A"), Item("B")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker());
+
+        await sut.InitializeAsync();
+
+        sut.SelectedRepository.Should().Be(sut.Repositories[0]);
+    }
+
+    [Fact]
+    public async Task Initialize_without_git_selects_first_configuration_row()
+    {
+        var dashboard = new FakeDashboard([Item("A"), Item("B")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(available: false),
+            dashboard,
+            new CancelledPicker());
+
+        await sut.InitializeAsync();
+
+        sut.Repositories.Should().HaveCount(2);
+        sut.SelectedRepository.Should().Be(sut.Repositories[0]);
+    }
+
+    [Fact]
+    public async Task Remove_middle_row_selects_next_neighbor()
+    {
+        // Task 52: A B(selected) C D → Delete → A C(selected) D.
+        var dashboard = new FakeDashboard(
+            [Item("A"), Item("B"), Item("C"), Item("D")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker(),
+            removalConfirmation: new FixedRemovalConfirmation(true));
+        await sut.InitializeAsync();
+        sut.SelectedRepository = sut.Repositories[1];
+
+        await sut.RemoveCommand.ExecuteAsync(null);
+
+        sut.Repositories.Select(r => r.Name).Should().Equal("A", "C", "D");
+        sut.SelectedRepository!.Name.Should().Be("C");
+    }
+
+    [Fact]
+    public async Task Remove_last_row_selects_previous_neighbor()
+    {
+        var dashboard = new FakeDashboard([Item("A"), Item("B")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker(),
+            removalConfirmation: new FixedRemovalConfirmation(true));
+        await sut.InitializeAsync();
+        sut.SelectedRepository = sut.Repositories[1];
+
+        await sut.RemoveCommand.ExecuteAsync(null);
+
+        sut.Repositories.Select(r => r.Name).Should().Equal("A");
+        sut.SelectedRepository!.Name.Should().Be("A");
+    }
+
+    [Fact]
+    public async Task Remove_only_row_clears_selection()
+    {
+        var dashboard = new FakeDashboard([Item("Only")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker(),
+            removalConfirmation: new FixedRemovalConfirmation(true));
+        await sut.InitializeAsync();
+        sut.SelectedRepository = sut.Repositories[0];
+
+        await sut.RemoveCommand.ExecuteAsync(null);
+
+        sut.Repositories.Should().BeEmpty();
+        sut.SelectedRepository.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Remove_cancelled_in_dialog_keeps_selection()
+    {
+        var dashboard = new FakeDashboard([Item("A"), Item("B")]);
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new CancelledPicker(),
+            removalConfirmation: new FixedRemovalConfirmation(false));
+        await sut.InitializeAsync();
+        var selected = sut.Repositories[0];
+        sut.SelectedRepository = selected;
+
+        await sut.RemoveCommand.ExecuteAsync(null);
+
+        sut.Repositories.Should().HaveCount(2);
+        sut.SelectedRepository.Should().Be(selected);
     }
 }

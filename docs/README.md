@@ -17,7 +17,7 @@ Key principle:
 - [07 — Architectural Rules](07-architectural-rules.md)
 - [08 — Final Structure and First Release](08-final-structure-and-release.md)
 
-## Backlog tickets (Tasks 1–47)
+## Backlog tickets (Tasks 1–53)
 
 ### Milestone 1 — Git foundation (Tasks 1–5)
 
@@ -89,3 +89,15 @@ Key principle:
 - [Task 45 — Add complete integration test matrix](tickets/TASK-45-integration-test-matrix.md)
 - [Task 46 — Add UI tests only where valuable](tickets/TASK-46-ui-tests.md)
 - [Task 47 — Add packaging](tickets/TASK-47-packaging.md)
+
+### Milestone 9 — Repository organization (Tasks 48–50)
+
+- [Task 48 — Add multiple repositories at once](tickets/TASK-48-add-multiple-repositories-at-once.md)
+- [Task 49 — Support custom repository aliases](tickets/TASK-49-support-custom-repository-aliases.md)
+- [Task 50 — Rearrange repositories and persist order](tickets/TASK-50-rearrange-repositories-and-persist-order.md)
+
+### Milestone 10 — Keyboard-first UX (Tasks 51–53)
+
+- [Task 51 — Add application keyboard shortcuts](tickets/TASK-51-add-application-keyboard-shortcuts.md)
+- [Task 52 — Make navigation and dialogs keyboard-first](tickets/TASK-52-make-navigation-and-dialogs-keyboard-first.md)
+- [Task 53 — Make shortcuts discoverable and protect the keymap with tests](tickets/TASK-53-shortcut-discoverability-and-regression-coverage.md)

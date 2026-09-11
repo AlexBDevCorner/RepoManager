@@ -19,12 +19,27 @@
                     Width="90"
                     IsCancel="True" />
         </StackPanel>
-        <ListBox ItemsSource="{Binding Options}"
+        <!-- Task 52: arrow keys move, Space toggles, Ctrl+A selects all
+             available, Ctrl+Shift+A clears, Enter confirms (IsDefault),
+             Esc cancels (IsCancel). CheckBoxes are not focusable so
+             focus stays on the ListBox for keyboard navigation. -->
+        <ListBox x:Name="RepositoryList"
+                 ItemsSource="{Binding Options}"
+                 SelectedItem="{Binding SelectedOption, Mode=TwoWay}"
                  SelectionMode="Single">
+            <ListBox.InputBindings>
+                <KeyBinding Gesture="Space"
+                            Command="{Binding ToggleSelectedCommand}" />
+                <KeyBinding Gesture="Ctrl+A"
+                            Command="{Binding SelectAllCommand}" />
+                <KeyBinding Gesture="Ctrl+Shift+A"
+                            Command="{Binding ClearSelectionCommand}" />
+            </ListBox.InputBindings>
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <StackPanel Orientation="Horizontal" Margin="2">
-                        <CheckBox IsChecked="{Binding IsChecked, Mode=TwoWay}"
+                        <CheckBox Focusable="False"
+                                  IsChecked="{Binding IsChecked, Mode=TwoWay}"
                                   IsEnabled="{Binding IsSelectable}"
                                   VerticalAlignment="Center" />
                         <StackPanel Margin="8,0,0,0">
