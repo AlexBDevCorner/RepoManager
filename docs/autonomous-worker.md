@@ -46,9 +46,11 @@ What a run does:
    must select exactly the dispatched task (human-authorized `ready`,
    dependencies done, project enabled, capacity free — dispatching any
    other task fails before OpenCode starts). It records the exact control
-   SHA, sets up .NET 8 + 10 (control CLI + target), ensures labels, runs
-   OpenCode with the stable wrapper prompt, then strictly verifies PR
-   metadata.
+   SHA, sets up .NET 8 + 10 (control CLI + target), ensures labels,
+   prepares the task PR (reopens it when a previous attempt left it closed;
+   fails on merged/multiple PRs so the agent always works against the single
+   open PR), runs OpenCode with the stable wrapper prompt, then strictly
+   verifies PR metadata.
 3. The workflow fails unless exactly one PR has ever existed on
    `autonomous/<TASK-ID>` targeting `master` — a run with no PR, several
    PRs, a redispatch after merge, or missing evidence sections is a failed

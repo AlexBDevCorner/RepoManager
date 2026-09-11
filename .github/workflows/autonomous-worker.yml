@@ -229,6 +229,42 @@ jobs:
             --description "Autonomous task $TASK_ID" \
             --color FBCA04 || true
 
+      - name: Prepare task PR (pre-OpenCode repair)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TASK_ID: ${{ inputs.task_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # OpenCode must always work against the single open PR: if the one
+          # historical PR for this task is closed (previous attempt), reopen
+          # it BEFORE the agent runs so it cannot create a second one. The
+          # post-run verifier keeps the same rules as verification.
+          BRANCH="autonomous/$TASK_ID"
+          PRS=$(gh pr list --head "$BRANCH" --state all --limit 100 --json number,state)
+          COUNT=$(printf '%s' "$PRS" | jq 'length')
+          if [ "$COUNT" -gt 1 ]; then
+            echo "::error::$COUNT PRs already exist for branch $BRANCH — at most one PR may ever exist per task; reopen/reuse it instead of dispatching again."
+            exit 1
+          fi
+          if [ "$COUNT" -eq 1 ]; then
+            NUM=$(printf '%s' "$PRS" | jq -r '.[0].number')
+            STATE=$(printf '%s' "$PRS" | jq -r '.[0].state')
+            case "$STATE" in
+              OPEN) echo "Retry path: OpenCode will update open PR #$NUM." ;;
+              CLOSED)
+                gh pr reopen "$NUM"
+                echo "Reopened closed PR #$NUM before OpenCode runs (same task, same PR)."
+                ;;
+              MERGED)
+                echo "::error::PR #$NUM for $TASK_ID is already merged — the task should be done; dispatch the next task instead."
+                exit 1
+                ;;
+            esac
+          else
+            echo "No PR yet for $BRANCH — OpenCode will create it."
+          fi
+
       - name: Run OpenCode worker
         uses: anomalyco/opencode/github@latest
         env:
