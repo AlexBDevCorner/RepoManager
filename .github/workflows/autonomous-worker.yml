@@ -76,6 +76,7 @@ jobs:
       - name: Fail if another autonomous task is already open
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           TASK_ID: ${{ inputs.task_id }}
         shell: bash
         run: |
