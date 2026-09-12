@@ -117,13 +117,19 @@ jobs:
             gh label create $label --force --color 0E8A16
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+      # The model runs here. Deterministic verification happens in the separate
+      # verify job on a fresh runner, so files or runner state mutated here
+      # cannot affect the verifier's code or environment.
       - name: Run OpenCode worker
         timeout-minutes: 35
         uses: anomalyco/opencode/github@latest
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          # CI-only: remove the approval wait; stop repeated failing tools.
-          OPENCODE_CONFIG_CONTENT: '{"permission":{"external_directory":"allow","doom_loop":"deny","question":"deny"}}'
+          # CI-only: allow reading the runner event file under temp, but deny
+          # edits there and deny shell redirection of runner command files.
+          # Verification runs in a separate job, so tampering here cannot
+          # silently pass the deterministic checks.
+          OPENCODE_CONFIG_CONTENT: '{"permission":{"external_directory":{"**/Temp/**":"allow","**/_temp/**":"allow","**/tmp/**":"allow"},"edit":{"**/Temp/**":"deny","**/_temp/**":"deny","**/tmp/**":"deny"},"bash":{"*":"allow","*GITHUB_ENV*":"deny","*GITHUB_PATH*":"deny","*GITHUB_OUTPUT*":"deny","*GITHUB_STATE*":"deny"},"doom_loop":"deny","question":"deny"}}'
         with:
           model: ${{ inputs.model }}
           share: false
@@ -148,13 +154,77 @@ jobs:
             Under Autonomous execution record OpenCode Go and ${{ inputs.model }}.
             Never merge, force-push, modify .github/, or commit secrets.
             Use PowerShell for Windows environment variables.
+  # Deterministic verifier on a fresh runner. It re-checks out the target and
+  # the pinned control SHA and verifies actual GitHub PR state, so the
+  # nondeterministic model step cannot modify the environment in which its own
+  # output is judged. Only this job's success means the worker produced a valid PR.
+  verify:
+    needs: worker
+    if: github.ref == 'refs/heads/master'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    env:
+      GH_REPO: ${{ github.repository }}
+      TASK_ID: ${{ inputs.task_id }}
+      TASK_PATH: ${{ inputs.task_path }}
+      ATTEMPT_ID: ${{ inputs.attempt_id }}
+      WORK_MODE: ${{ inputs.mode }}
+      REVIEW_ID: ${{ inputs.review_id }}
+      EXPECTED_HEAD: ${{ inputs.expected_head }}
+    steps:
+      - name: Validate dispatch inputs before checkout
+        shell: pwsh
+        env:
+          CONTROL_REPO: ${{ inputs.control_repo }}
+          CONTROL_COMMIT: ${{ inputs.control_commit }}
+        run: |
+          if ($env:CONTROL_REPO -cne 'AlexBDevCorner/AutonomousWork') { throw 'Unapproved control repository' }
+          if ($env:TASK_ID -cnotmatch '^RM-[0-9]+$') { throw 'Invalid task ID' }
+          if ($env:TASK_PATH -cne "projects/repomanager/tasks/$env:TASK_ID.md") { throw 'Invalid task path' }
+          if ($env:CONTROL_COMMIT -and $env:CONTROL_COMMIT -cnotmatch '^[a-f0-9]{40}$') { throw 'Expected full control SHA' }
+          if ($env:ATTEMPT_ID -and ($env:ATTEMPT_ID -cnotmatch '^[a-f0-9-]{36}$' -or !$env:CONTROL_COMMIT)) { throw 'Invalid claim' }
+          if ($env:WORK_MODE -notin @('implementation', 'correction')) { throw 'Invalid mode' }
+          if ($env:WORK_MODE -eq 'correction' -and (!$env:ATTEMPT_ID -or $env:REVIEW_ID -notmatch '^[0-9]+$' -or $env:EXPECTED_HEAD -cnotmatch '^[a-f0-9]{40}$')) { throw 'Invalid review claim' }
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@v6
+        with:
+          repository: AlexBDevCorner/AutonomousWork
+          ref: ${{ inputs.control_commit || 'master' }}
+          token: ${{ secrets.CONTROL_REPO_TOKEN }}
+          path: control
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Build validator and record pin
+        shell: pwsh
+        run: |
+          dotnet build control/tools/AutonomousWork.Cli -c Release --nologo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $controlSha = git -C control rev-parse HEAD
+          if ($env:CONTROL_COMMIT -and $controlSha -cne $env:CONTROL_COMMIT) { throw "Control checkout $controlSha does not match pinned claim" }
+          "CONTROL_SHA=$controlSha" >> $env:GITHUB_ENV
+        env:
+          CONTROL_COMMIT: ${{ inputs.control_commit }}
       - name: Verify permanent task/PR mapping and metadata
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
           $controlChanges = git -C control status --porcelain
-          if ($LASTEXITCODE -ne 0 -or $controlChanges) { throw 'Worker modified the control checkout' }
+          if ($LASTEXITCODE -ne 0 -or $controlChanges) { throw 'Control checkout is not clean' }
           node control/tools/autonomy/worker.mjs verify
       - name: Record run outcome
         if: always()

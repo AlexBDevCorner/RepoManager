@@ -9,9 +9,18 @@ requires an exact persisted attempt UUID at a full control SHA. The worker
 rechecks current project/global switches, task content, open PRs, review head,
 and execution limits after queueing.
 
-The OpenCode action receives a CI-only permission override. External runner
-paths are allowed, while questions and repeated failing tool loops are denied.
-The model step times out after 35 minutes and the job after 50 minutes.
+The OpenCode action receives a CI-only permission override. Only runner temp
+paths are readable outside the worktree, edits there are denied, shell
+redirection of runner command files is denied, and questions/repeated failing
+tool loops are denied. The model step times out after 35 minutes and the worker
+job after 50 minutes.
+
+Deterministic verification runs in a separate `verify` job on a fresh runner.
+It re-checks out the target and the pinned control SHA and verifies actual
+GitHub PR state there, so the model cannot modify the verifier's code or the
+environment (such as `GITHUB_ENV`/`GITHUB_PATH`) in which its own output is
+judged. The `verify` job uses read-only permissions and fails closed when the
+control checkout is not clean or does not match the pinned claim.
 
 Corrections come from the deterministic control dispatcher, tied to a trusted
 submitted review ID and exact PR head SHA. The previous unbounded `/oc` comment
