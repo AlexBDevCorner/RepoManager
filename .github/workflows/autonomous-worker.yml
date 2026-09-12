@@ -125,11 +125,15 @@ jobs:
         uses: anomalyco/opencode/github@latest
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
-          # CI-only: allow reading the runner event file under temp, but deny
-          # edits there and deny shell redirection of runner command files.
-          # Verification runs in a separate job, so tampering here cannot
-          # silently pass the deterministic checks.
-          OPENCODE_CONFIG_CONTENT: '{"permission":{"external_directory":{"**/Temp/**":"allow","**/_temp/**":"allow","**/tmp/**":"allow"},"edit":{"**/Temp/**":"deny","**/_temp/**":"deny","**/tmp/**":"deny"},"bash":{"*":"allow","*GITHUB_ENV*":"deny","*GITHUB_PATH*":"deny","*GITHUB_OUTPUT*":"deny","*GITHUB_STATE*":"deny"},"doom_loop":"deny","question":"deny"}}'
+          # Fail closed by default: unmatched external_directory would otherwise
+          # fall back to OpenCode's interactive `ask`, which hangs an
+          # unattended worker (e.g. synthetic `C:\*` + `_temp` checks combine
+          # into one approval). `*` deny comes first; OpenCode uses the last
+          # matching rule, so the narrow Temp allows below still win.
+          # Edits under temp stay denied, as does shell redirection of runner
+          # command files. Verification runs in a separate job, so tampering
+          # here cannot silently pass the deterministic checks.
+          OPENCODE_CONFIG_CONTENT: '{"permission":{"external_directory":{"*":"deny","**/Temp/**":"allow","**/_temp/**":"allow","**/tmp/**":"allow"},"edit":{"**/Temp/**":"deny","**/_temp/**":"deny","**/tmp/**":"deny"},"bash":{"*":"allow","*GITHUB_ENV*":"deny","*GITHUB_PATH*":"deny","*GITHUB_OUTPUT*":"deny","*GITHUB_STATE*":"deny"},"doom_loop":"deny","question":"deny"}}'
         with:
           model: ${{ inputs.model }}
           share: false
@@ -137,6 +141,10 @@ jobs:
             Implement only task ${{ inputs.task_id }}. Follow AGENTS.md.
             Read the authoritative specification at control/${{ inputs.task_path }}.
             The control checkout is read-only. Never change it, requirements, priorities, or future tasks.
+            Do not access GITHUB_EVENT_PATH or other files outside the repository
+            and control checkout. Runner temporary files may be read only when
+            required by the workflow. If external filesystem access is denied,
+            continue without it rather than requesting permission.
             Execution mode: ${{ inputs.mode }}.
             For implementation: use branch autonomous/${{ inputs.task_id }} from master.
             If its open PR exists, reuse that branch and PR. Never create a second PR.
