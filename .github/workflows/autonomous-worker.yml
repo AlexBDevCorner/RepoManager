@@ -49,7 +49,6 @@ permissions:
   pull-requests: write
   issues: write
   actions: read
-  id-token: write
 jobs:
   worker:
     if: github.ref == 'refs/heads/master'
@@ -108,6 +107,52 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CONTROL_READ_TOKEN: ${{ secrets.CONTROL_REPO_TOKEN }}
         run: node control/tools/autonomy/worker.mjs guard
+      - name: Mint worker GitHub App token
+        id: worker-token
+        # Short-lived installation token for the OpenCode step. PRs created with
+        # the built-in GITHUB_TOKEN leave pull_request CI runs approval-required,
+        # which would stall unattended autonomy; an App token lets CI run
+        # automatically. Same action pin as the control-repo dispatcher.
+        # Requires vars.AUTONOMOUS_APP_CLIENT_ID plus
+        # secrets.AUTONOMOUS_APP_PRIVATE_KEY in this repository, and the App
+        # installation on RepoManager must grant Contents, Pull requests, and
+        # Issues write.
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.AUTONOMOUS_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTONOMOUS_APP_PRIVATE_KEY }}
+          owner: AlexBDevCorner
+          repositories: RepoManager
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      - name: Verify worker GitHub authentication
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.worker-token.outputs.token }}
+        run: |
+          $repo = gh api "repos/$env:GH_REPO" --jq '.full_name'
+
+          if ($LASTEXITCODE -ne 0) {
+            throw 'GitHub CLI authentication failed'
+          }
+
+          if ($repo -cne $env:GH_REPO) {
+            throw "GitHub CLI authenticated against unexpected repository: $repo"
+          }
+      - name: Wire App token into git
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.worker-token.outputs.token }}
+        run: |
+          # use_github_token mode skips OpenCode's own git credential setup, and
+          # the checkouts use persist-credentials: false, so plain `git push`
+          # would otherwise be unauthenticated. Configure gh as the git
+          # credential helper deterministically here instead of leaving it to
+          # the model. No raw token is persisted: git invokes
+          # `gh auth git-credential` on demand, which reads GH_TOKEN at runtime.
+          gh auth setup-git --hostname github.com --force
+          if ($LASTEXITCODE -ne 0) { throw 'gh auth setup-git failed' }
       - name: Ensure PR labels
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -125,6 +170,12 @@ jobs:
         uses: anomalyco/opencode/github@latest
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          # App installation token, not the built-in GITHUB_TOKEN, so PRs opened
+          # by the worker trigger pull_request CI without manual approval.
+          # OpenCode's use_github_token mode accepts a PAT or another App token
+          # passed as GITHUB_TOKEN.
+          GITHUB_TOKEN: ${{ steps.worker-token.outputs.token }}
+          GH_TOKEN: ${{ steps.worker-token.outputs.token }}
           # Fail closed by default: unmatched external_directory would otherwise
           # fall back to OpenCode's interactive `ask`, which hangs an
           # unattended worker (e.g. synthetic `C:\*` + `_temp` checks combine
@@ -133,10 +184,15 @@ jobs:
           # Edits under temp stay denied, as does shell redirection of runner
           # command files. Verification runs in a separate job, so tampering
           # here cannot silently pass the deterministic checks.
-          OPENCODE_CONFIG_CONTENT: '{"permission":{"external_directory":{"*":"deny","**/Temp/**":"allow","**/_temp/**":"allow","**/tmp/**":"allow"},"edit":{"**/Temp/**":"deny","**/_temp/**":"deny","**/tmp/**":"deny"},"bash":{"*":"allow","*GITHUB_ENV*":"deny","*GITHUB_PATH*":"deny","*GITHUB_OUTPUT*":"deny","*GITHUB_STATE*":"deny"},"doom_loop":"deny","question":"deny"}}'
+          # Bash keeps a broad `*` allow first so ordinary `gh`/`git` work,
+          # with narrower deny rules after it so credential-recovery patterns
+          # win (OpenCode uses the last matching rule). The denies below cover
+          # obvious token inspection without banning every `credential` string.
+          OPENCODE_CONFIG_CONTENT: '{"permission":{"external_directory":{"*":"deny","**/Temp/**":"allow","**/_temp/**":"allow","**/tmp/**":"allow"},"edit":{"**/Temp/**":"deny","**/_temp/**":"deny","**/tmp/**":"deny"},"bash":{"*":"allow","*GITHUB_ENV*":"deny","*GITHUB_PATH*":"deny","*GITHUB_OUTPUT*":"deny","*GITHUB_STATE*":"deny","*GH_TOKEN*":"deny","*GITHUB_TOKEN*":"deny","*gh auth token*":"deny","*extraheader*":"deny","*AUTHORIZATION*":"deny"},"doom_loop":"deny","question":"deny"}}'
         with:
           model: ${{ inputs.model }}
           share: false
+          use_github_token: true
           prompt: |
             Implement only task ${{ inputs.task_id }}. Follow AGENTS.md.
             Read the authoritative specification at control/${{ inputs.task_path }}.
@@ -145,6 +201,13 @@ jobs:
             and control checkout. Runner temporary files may be read only when
             required by the workflow. If external filesystem access is denied,
             continue without it rather than requesting permission.
+            GitHub authentication is already provided by the workflow.
+            Use gh normally for GitHub operations.
+            Never inspect, extract, decode, print, or persist GitHub credentials,
+            Git HTTP authorization headers, credential-helper data, or runner
+            credential files. Never run `gh auth token`.
+            If GitHub authentication fails, stop and report the failure rather
+            than attempting to recover credentials from Git configuration.
             Execution mode: ${{ inputs.mode }}.
             For implementation: use branch autonomous/${{ inputs.task_id }} from master.
             If its open PR exists, reuse that branch and PR. Never create a second PR.

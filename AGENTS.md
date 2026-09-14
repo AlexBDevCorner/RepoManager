@@ -115,6 +115,12 @@ dotnet run --project src/RepoDashboard.App
   results — never invent results.
   `## Autonomous execution` states the OpenCode Go model used.
 - Never merge the PR, never force-push, never commit secrets.
+- GitHub authentication is provided by the workflow. Use ordinary `git push`
+  / `gh` operations expected by the worker.
+- Never inspect or reconstruct authentication credentials. Never print token
+  environment variables. Never run `gh auth token`.
+- Authentication failure is a worker failure, not permission to discover
+  credentials by another mechanism.
 
 ## Must not modify
 
