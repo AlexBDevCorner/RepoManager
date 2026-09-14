@@ -140,6 +140,19 @@ jobs:
           if ($repo -cne $env:GH_REPO) {
             throw "GitHub CLI authenticated against unexpected repository: $repo"
           }
+      - name: Wire App token into git
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ steps.worker-token.outputs.token }}
+        run: |
+          # use_github_token mode skips OpenCode's own git credential setup, and
+          # the checkouts use persist-credentials: false, so plain `git push`
+          # would otherwise be unauthenticated. Configure gh as the git
+          # credential helper deterministically here instead of leaving it to
+          # the model. No raw token is persisted: git invokes
+          # `gh auth git-credential` on demand, which reads GH_TOKEN at runtime.
+          gh auth setup-git --hostname github.com --force
+          if ($LASTEXITCODE -ne 0) { throw 'gh auth setup-git failed' }
       - name: Ensure PR labels
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

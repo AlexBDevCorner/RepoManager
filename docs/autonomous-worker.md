@@ -16,9 +16,11 @@ installation token minted in the run (passed as both `GITHUB_TOKEN` and
 (rather than the built-in `GITHUB_TOKEN`) is what lets `pull_request` CI run
 automatically on worker-created PRs instead of waiting for manual workflow
 approval. A read-only `gh api` preflight validates that token before OpenCode
-starts and fails the run if authentication is unavailable. No OIDC
-(`id-token`) is requested. `CONTROL_REPO_TOKEN` remains separate and is only
-used for private control-repository reads.
+starts and fails the run if authentication is unavailable. The workflow then
+wires the same token into git via the GitHub CLI credential helper
+(`gh auth setup-git`), so ordinary `git push` works without persisting the raw
+token. No OIDC (`id-token`) is requested. `CONTROL_REPO_TOKEN` remains separate
+and is only used for private control-repository reads.
 
 The OpenCode action receives a CI-only permission override. Only runner temp
 paths are readable outside the worktree, edits there are denied, shell
