@@ -49,7 +49,6 @@ permissions:
   pull-requests: write
   issues: write
   actions: read
-  id-token: write
 jobs:
   worker:
     if: github.ref == 'refs/heads/master'
@@ -117,6 +116,20 @@ jobs:
             gh label create $label --force --color 0E8A16
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+      - name: Verify worker GitHub authentication
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $repo = gh api "repos/$env:GH_REPO" --jq '.full_name'
+
+          if ($LASTEXITCODE -ne 0) {
+            throw 'GitHub CLI authentication failed'
+          }
+
+          if ($repo -cne $env:GH_REPO) {
+            throw "GitHub CLI authenticated against unexpected repository: $repo"
+          }
       # The model runs here. Deterministic verification happens in the separate
       # verify job on a fresh runner, so files or runner state mutated here
       # cannot affect the verifier's code or environment.
@@ -125,6 +138,8 @@ jobs:
         uses: anomalyco/opencode/github@latest
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Fail closed by default: unmatched external_directory would otherwise
           # fall back to OpenCode's interactive `ask`, which hangs an
           # unattended worker (e.g. synthetic `C:\*` + `_temp` checks combine
@@ -133,10 +148,15 @@ jobs:
           # Edits under temp stay denied, as does shell redirection of runner
           # command files. Verification runs in a separate job, so tampering
           # here cannot silently pass the deterministic checks.
-          OPENCODE_CONFIG_CONTENT: '{"permission":{"external_directory":{"*":"deny","**/Temp/**":"allow","**/_temp/**":"allow","**/tmp/**":"allow"},"edit":{"**/Temp/**":"deny","**/_temp/**":"deny","**/tmp/**":"deny"},"bash":{"*":"allow","*GITHUB_ENV*":"deny","*GITHUB_PATH*":"deny","*GITHUB_OUTPUT*":"deny","*GITHUB_STATE*":"deny"},"doom_loop":"deny","question":"deny"}}'
+          # Bash keeps a broad `*` allow first so ordinary `gh`/`git` work,
+          # with narrower deny rules after it so credential-recovery patterns
+          # win (OpenCode uses the last matching rule). The denies below cover
+          # obvious token inspection without banning every `credential` string.
+          OPENCODE_CONFIG_CONTENT: '{"permission":{"external_directory":{"*":"deny","**/Temp/**":"allow","**/_temp/**":"allow","**/tmp/**":"allow"},"edit":{"**/Temp/**":"deny","**/_temp/**":"deny","**/tmp/**":"deny"},"bash":{"*":"allow","*GITHUB_ENV*":"deny","*GITHUB_PATH*":"deny","*GITHUB_OUTPUT*":"deny","*GITHUB_STATE*":"deny","*GH_TOKEN*":"deny","*GITHUB_TOKEN*":"deny","*gh auth token*":"deny","*extraheader*":"deny","*AUTHORIZATION*":"deny"},"doom_loop":"deny","question":"deny"}}'
         with:
           model: ${{ inputs.model }}
           share: false
+          use_github_token: true
           prompt: |
             Implement only task ${{ inputs.task_id }}. Follow AGENTS.md.
             Read the authoritative specification at control/${{ inputs.task_path }}.
@@ -145,6 +165,13 @@ jobs:
             and control checkout. Runner temporary files may be read only when
             required by the workflow. If external filesystem access is denied,
             continue without it rather than requesting permission.
+            GitHub authentication is already provided by the workflow.
+            Use gh normally for GitHub operations.
+            Never inspect, extract, decode, print, or persist GitHub credentials,
+            Git HTTP authorization headers, credential-helper data, or runner
+            credential files. Never run `gh auth token`.
+            If GitHub authentication fails, stop and report the failure rather
+            than attempting to recover credentials from Git configuration.
             Execution mode: ${{ inputs.mode }}.
             For implementation: use branch autonomous/${{ inputs.task_id }} from master.
             If its open PR exists, reuse that branch and PR. Never create a second PR.

@@ -9,9 +9,19 @@ requires an exact persisted attempt UUID at a full control SHA. The worker
 rechecks current project/global switches, task content, open PRs, review head,
 and execution limits after queueing.
 
+GitHub authentication is explicit and workflow-scoped. The OpenCode step runs
+with `use_github_token: true` and receives the short-lived built-in
+`GITHUB_TOKEN` (plus `GH_TOKEN` for GitHub CLI), so ordinary `gh` commands
+work non-interactively. A read-only `gh api` preflight runs before OpenCode
+and fails the run if authentication is unavailable. No OIDC (`id-token`) is
+requested. `CONTROL_REPO_TOKEN` remains separate and is only used for private
+control-repository reads.
+
 The OpenCode action receives a CI-only permission override. Only runner temp
 paths are readable outside the worktree, edits there are denied, shell
-redirection of runner command files is denied, and questions/repeated failing
+redirection of runner command files is denied, obvious token-inspection
+commands (`GH_TOKEN`, `GITHUB_TOKEN`, `gh auth token`, `extraheader`,
+authorization headers) are denied, and questions/repeated failing
 tool loops are denied. The model step times out after 35 minutes and the worker
 job after 50 minutes.
 
