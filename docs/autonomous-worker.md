@@ -10,12 +10,15 @@ rechecks current project/global switches, task content, open PRs, review head,
 and execution limits after queueing.
 
 GitHub authentication is explicit and workflow-scoped. The OpenCode step runs
-with `use_github_token: true` and receives the short-lived built-in
-`GITHUB_TOKEN` (plus `GH_TOKEN` for GitHub CLI), so ordinary `gh` commands
-work non-interactively. A read-only `gh api` preflight runs before OpenCode
-and fails the run if authentication is unavailable. No OIDC (`id-token`) is
-requested. `CONTROL_REPO_TOKEN` remains separate and is only used for private
-control-repository reads.
+with `use_github_token: true` and receives a short-lived GitHub App
+installation token minted in the run (passed as both `GITHUB_TOKEN` and
+`GH_TOKEN`), so ordinary `gh` commands work non-interactively. The App token
+(rather than the built-in `GITHUB_TOKEN`) is what lets `pull_request` CI run
+automatically on worker-created PRs instead of waiting for manual workflow
+approval. A read-only `gh api` preflight validates that token before OpenCode
+starts and fails the run if authentication is unavailable. No OIDC
+(`id-token`) is requested. `CONTROL_REPO_TOKEN` remains separate and is only
+used for private control-repository reads.
 
 The OpenCode action receives a CI-only permission override. Only runner temp
 paths are readable outside the worktree, edits there are denied, shell
@@ -40,7 +43,11 @@ CI restores, builds and runs all test projects on Windows. Require the
 `build-and-test` check and a review on master in repository settings; adding the
 workflow does not configure branch protection. Merges remain manual.
 
-Required existing credentials: `OPENCODE_API_KEY`, the OpenCode App installation,
-and `CONTROL_REPO_TOKEN` with read access to AutonomousWork. No credentials are
-stored in this change. See AutonomousWork's `docs/autonomy-operations.md` for
-activation, reviewer setup and failure recovery.
+Required existing credentials: `OPENCODE_API_KEY`, `CONTROL_REPO_TOKEN` with
+read access to AutonomousWork, and the worker App credentials
+(`vars.AUTONOMOUS_APP_CLIENT_ID` plus `secrets.AUTONOMOUS_APP_PRIVATE_KEY`)
+whose installation on RepoManager grants Contents, Pull requests, and Issues
+write. No OIDC and no OpenCode App installation is required in
+`use_github_token` mode. No credentials are stored in this change. See
+AutonomousWork's `docs/autonomy-operations.md` for activation, reviewer setup
+and failure recovery.
