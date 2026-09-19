@@ -62,6 +62,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(OpenFolderCommand))]
     [NotifyCanExecuteChangedFor(nameof(OpenTerminalCommand))]
     [NotifyCanExecuteChangedFor(nameof(CopyPathCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CopyBranchCommand))]
     [NotifyCanExecuteChangedFor(nameof(RemoveCommand))]
     [NotifyCanExecuteChangedFor(nameof(RenameCommand))]
     [NotifyCanExecuteChangedFor(nameof(MoveUpCommand))]
@@ -89,6 +90,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(nameof(OpenFolderCommand))]
     [NotifyCanExecuteChangedFor(nameof(OpenTerminalCommand))]
     [NotifyCanExecuteChangedFor(nameof(CopyPathCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CopyBranchCommand))]
     [NotifyCanExecuteChangedFor(nameof(RemoveCommand))]
     [NotifyCanExecuteChangedFor(nameof(RenameCommand))]
     [NotifyCanExecuteChangedFor(nameof(MoveUpCommand))]
@@ -361,6 +363,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private bool CanCopyPath(RepositoryRowViewModel? target) =>
         !IsBusy && (target ?? SelectedRepository) is not null;
+
+    // RM-003: presentation-only convenience. Disabled without a selection,
+    // while busy, without a usable branch, and for detached HEAD (the row
+    // reports no copyable branch in all those cases). Needs no Git: the
+    // branch name is already mapped into the row.
+    private bool CanCopyBranch(RepositoryRowViewModel? target) =>
+        !IsBusy && !string.IsNullOrWhiteSpace(
+            (target ?? SelectedRepository)?.CopyableBranch);
 
     /// <summary>
     /// Windows Terminal (<c>wt.exe</c>) on PATH, resolved once. When it is
@@ -1023,6 +1033,42 @@ public sealed partial class MainWindowViewModel : ObservableObject
         catch (Exception ex)
         {
             StatusText = $"Could not copy path for '{selected.Name}': {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Copies the selected repository's current branch name to the
+    /// clipboard (RM-003). Presentation-only: reuses the branch name
+    /// already mapped into the row. Never invokes Git and never mutates
+    /// the repository.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanCopyBranch))]
+    private void CopyBranch(RepositoryRowViewModel? target)
+    {
+        var selected = target ?? SelectedRepository;
+
+        if (selected is null)
+        {
+            StatusText = "Select a repository first.";
+            return;
+        }
+
+        var branch = selected.CopyableBranch;
+
+        if (string.IsNullOrWhiteSpace(branch))
+        {
+            StatusText = $"No branch to copy for '{selected.Name}'.";
+            return;
+        }
+
+        try
+        {
+            Clipboard.SetText(branch);
+            StatusText = $"Copied branch '{branch}'.";
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Could not copy branch for '{selected.Name}': {ex.Message}";
         }
     }
 

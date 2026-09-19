@@ -19,6 +19,15 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
     [ObservableProperty]
     private string _branch = string.Empty;
 
+    /// <summary>
+    /// Exact current branch name for the Copy Branch action (RM-003),
+    /// or <c>null</c> when there is no usable branch: inspection failed,
+    /// not a Git repository, detached HEAD, or missing branch name.
+    /// Derived from the same snapshot mapped here — never a new Git query.
+    /// </summary>
+    [ObservableProperty]
+    private string? _copyableBranch;
+
     [ObservableProperty]
     private string _worktreeStatus = string.Empty;
 
@@ -134,6 +143,7 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
             });
 
         row.Branch = "—";
+        row.CopyableBranch = null;
         row.WorktreeStatus = "—";
         row.UpstreamStatus = "—";
         row.DefaultBranchStatus = "—";
@@ -164,6 +174,7 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
         if (item.InspectionError is not null)
         {
             Branch = "—";
+            CopyableBranch = null;
             WorktreeStatus = "Error";
             UpstreamStatus = "—";
             DefaultBranchStatus = "—";
@@ -176,6 +187,7 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
         }
 
         Branch = FormatBranch(item.Snapshot);
+        CopyableBranch = GetCopyableBranch(item.Snapshot);
         WorktreeStatus = FormatWorktreeStatus(item.Snapshot);
         UpstreamStatus = FormatDivergence(item.Snapshot.UpstreamDivergence);
         DefaultBranchStatus = FormatDefaultBranchStatus(item.Snapshot);
@@ -408,6 +420,23 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
         }
 
         return $"↑{divergence.Ahead} ↓{divergence.Behind}";
+    }
+
+    private static string? GetCopyableBranch(RepositorySnapshot snapshot)
+    {
+        if (!snapshot.DirectoryExists || !snapshot.IsGitRepository)
+        {
+            return null;
+        }
+
+        if (snapshot.IsDetachedHead)
+        {
+            return null;
+        }
+
+        return string.IsNullOrWhiteSpace(snapshot.CurrentBranch)
+            ? null
+            : snapshot.CurrentBranch;
     }
 
     private static string FormatBranch(RepositorySnapshot snapshot)

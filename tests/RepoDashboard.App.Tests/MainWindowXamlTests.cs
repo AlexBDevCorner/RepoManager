@@ -136,6 +136,7 @@ public sealed class MainWindowXamlTests
     [InlineData("Enter", "OpenFolderCommand")]
     [InlineData("Ctrl+Enter", "OpenTerminalCommand")]
     [InlineData("Ctrl+Shift+C", "CopyPathCommand")]
+    [InlineData("Ctrl+Shift+B", "CopyBranchCommand")]
     [InlineData("F1", "ApplicationCommands.Help")]
     public void MainWindow_registers_expected_shortcut(
         string gesture,
@@ -194,6 +195,7 @@ public sealed class MainWindowXamlTests
             "Enter",
             "Ctrl+Enter",
             "Ctrl+Shift+C",
+            "Ctrl+Shift+B",
             "F1"
         };
 
@@ -226,6 +228,7 @@ public sealed class MainWindowXamlTests
     [InlineData("Open Folder", "Enter")]
     [InlineData("Open Terminal", "Ctrl+Enter")]
     [InlineData("Copy Path", "Ctrl+Shift+C")]
+    [InlineData("Copy Branch", "Ctrl+Shift+B")]
     [InlineData("Rename...", "F2")]
     [InlineData("Move Up", "Alt+Up")]
     [InlineData("Move Down", "Alt+Down")]
@@ -366,7 +369,7 @@ public sealed class MainWindowXamlTests
                      "Alt+Up", "Alt+Down", "Delete",
                      "F5", "Shift+F5", "F6", "Shift+F6",
                      "Ctrl+F7", "Ctrl+Shift+F7",
-                     "Esc", "Enter", "Ctrl+Enter", "Ctrl+Shift+C", "F1"
+                      "Esc", "Enter", "Ctrl+Enter", "Ctrl+Shift+C", "Ctrl+Shift+B", "F1"
                  })
         {
             text.Should().Contain(gesture);

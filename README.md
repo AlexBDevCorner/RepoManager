@@ -122,6 +122,7 @@ Nearly every toolbar and context-menu action is available from the keyboard. Sho
 | Open repository folder | `Enter` |
 | Open terminal | `Ctrl+Enter` |
 | Copy repository path | `Ctrl+Shift+C` |
+| Copy branch name | `Ctrl+Shift+B` |
 | Keyboard shortcut reference | `F1` |
 
 `Update` requires `Ctrl` because, unlike refresh and fetch, it can modify the checked-out branch. Shortcuts are shown in context menus and toolbar tooltips; press `F1` in the application for the grouped reference.
