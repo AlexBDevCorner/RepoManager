@@ -171,7 +171,7 @@ jobs:
       # cannot affect the verifier's code or environment.
       - name: Run OpenCode worker
         timeout-minutes: 35
-        uses: anomalyco/opencode/github@latest
+        uses: anomalyco/opencode/github@83abc64a5c4e0e0a5157f2c4435d34131009a404 # pinned 2026-09-19
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           # App installation token, not the built-in GITHUB_TOKEN, so PRs opened
