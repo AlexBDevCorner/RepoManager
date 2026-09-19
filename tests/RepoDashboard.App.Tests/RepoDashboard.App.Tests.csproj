@@ -5,6 +5,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
+    <!-- RM-003: Copy Branch tests verify real clipboard content via
+         System.Windows.Clipboard, which lives in PresentationCore. -->
+    <UseWPF>true</UseWPF>
   </PropertyGroup>
 
   <ItemGroup>
@@ -16,6 +19,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- System.IO: explicit because UseWPF changes the implicit-using set. -->
+    <Using Include="System.IO" />
     <Using Include="Xunit" />
   </ItemGroup>
 

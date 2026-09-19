@@ -63,6 +63,8 @@
                     Command="{Binding OpenTerminalCommand}" />
         <KeyBinding Gesture="Ctrl+Shift+C"
                     Command="{Binding CopyPathCommand}" />
+        <KeyBinding Gesture="Ctrl+Shift+B"
+                    Command="{Binding CopyBranchCommand}" />
         <!-- Task 53: shortcut reference. InputGestureText is display-only;
              this binding is the functional source. -->
         <KeyBinding Gesture="F1"
@@ -332,6 +334,12 @@
                                 <MenuItem Header="Copy Path"
                                           InputGestureText="Ctrl+Shift+C"
                                           Command="{Binding PlacementTarget.Tag.CopyPathCommand,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}"
+                                          CommandParameter="{Binding PlacementTarget.DataContext,
+                                              RelativeSource={RelativeSource AncestorType=ContextMenu}}" />
+                                <MenuItem Header="Copy Branch"
+                                          InputGestureText="Ctrl+Shift+B"
+                                          Command="{Binding PlacementTarget.Tag.CopyBranchCommand,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}"
                                           CommandParameter="{Binding PlacementTarget.DataContext,
                                               RelativeSource={RelativeSource AncestorType=ContextMenu}}" />

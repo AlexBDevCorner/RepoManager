@@ -105,6 +105,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Grid.Column="0" Text="Esc" FontFamily="Consolas" />
                     <TextBlock Grid.Row="0" Grid.Column="1" Text="Cancel running operation" TextWrapping="Wrap" />
@@ -114,8 +115,10 @@
                     <TextBlock Grid.Row="2" Grid.Column="1" Text="Open terminal" TextWrapping="Wrap" />
                     <TextBlock Grid.Row="3" Grid.Column="0" Text="Ctrl+Shift+C" FontFamily="Consolas" />
                     <TextBlock Grid.Row="3" Grid.Column="1" Text="Copy repository path" TextWrapping="Wrap" />
-                    <TextBlock Grid.Row="4" Grid.Column="0" Text="F1" FontFamily="Consolas" />
-                    <TextBlock Grid.Row="4" Grid.Column="1" Text="Show this reference" TextWrapping="Wrap" />
+                    <TextBlock Grid.Row="4" Grid.Column="0" Text="Ctrl+Shift+B" FontFamily="Consolas" />
+                    <TextBlock Grid.Row="4" Grid.Column="1" Text="Copy branch name" TextWrapping="Wrap" />
+                    <TextBlock Grid.Row="5" Grid.Column="0" Text="F1" FontFamily="Consolas" />
+                    <TextBlock Grid.Row="5" Grid.Column="1" Text="Show this reference" TextWrapping="Wrap" />
                 </Grid>
             </StackPanel>
         </ScrollViewer>
