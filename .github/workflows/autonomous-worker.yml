@@ -17,7 +17,7 @@ on:
         required: true
         type: string
       control_commit:
-        description: Full control SHA; empty only for manual pilot
+        description: Full control SHA; empty only for manual dispatch
         default: ''
         type: string
       model:
@@ -29,7 +29,7 @@ on:
         default: xhigh
         type: string
       attempt_id:
-        description: Persisted attempt UUID; empty for manual pilot
+        description: Persisted attempt UUID; empty for manual dispatch
         default: ''
         type: string
       mode:
