@@ -22,7 +22,7 @@ on:
         type: string
       model:
         description: OpenCode Go model
-        default: opencode-go/kimi-k3
+        default: opencode-go/muse-spark-1.3-contributor
         type: string
       attempt_id:
         description: Persisted attempt UUID; empty for manual pilot
