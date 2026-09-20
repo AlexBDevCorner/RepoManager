@@ -101,8 +101,22 @@ dotnet run --project src/RepoDashboard.App
 - Never edit anything under `control/`. Never invent follow-up tasks, never
   change priorities or dependencies — out-of-scope items belong in new draft
   tasks, not in your PR.
-- Work on branch `autonomous/<TASK-ID>` from `master`. Open exactly ONE PR
-  to `master`. If the branch/PR already exists (retry), reuse and update it.
+- Work on branch `autonomous/<TASK-ID>` from `master`. Push that branch to
+  `origin` immediately after creating it. If the branch/PR already exists
+  (retry), reuse and update it; never create a second branch or PR for the task.
+- Preserve progress remotely throughout long-running work. Commit and push
+  after every meaningful milestone, and if a milestone takes longer, make a
+  checkpoint commit and push at least every 10–15 minutes. Do not wait until
+  the whole task is complete before the first commit or push.
+- Checkpoint commits may represent incomplete work. Keep them small enough that
+  a human can inspect the implementation history, and use descriptive messages
+  such as `checkpoint: migrate main window` or
+  `checkpoint: adapt app tests`. Do not squash checkpoint commits merely to
+  make history look cleaner.
+- After the first pushed checkpoint that creates a diff from `master`, open
+  exactly ONE draft PR to `master`. Keep updating and pushing to that same PR
+  while implementation is in progress. Mark the PR ready for review only after
+  the required verification has run and the task is genuinely ready for review.
 - PR title MUST be `[<TASK-ID>] <concise description>`.
 - PR labels MUST include `autonomous`, `autonomous:opencode`, `task:<TASK-ID>`
   (create the `task:<TASK-ID>` label if missing).
