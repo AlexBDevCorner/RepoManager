@@ -116,9 +116,12 @@ dotnet run --project src/RepoDashboard.App
 - For a new implementation with no existing PR, after the first pushed
   checkpoint that creates a diff from `master`, open exactly ONE draft PR to
   `master`. Keep updating and pushing to that same PR while implementation is
-  in progress. On retries/corrections, reuse the existing PR and preserve its
-  current draft/ready state while working. Mark a new draft PR ready for review
-  only after the required verification has run and the task is genuinely ready.
+  in progress. On retries/corrections, reuse the existing PR.
+- A successful autonomous worker run MUST leave the task PR ready for review,
+  never draft. After the required verification has run and the task is genuinely
+  ready, explicitly mark the PR ready for review before finishing. If the PR is
+  still draft, run the equivalent of `gh pr ready <number>`. Do not report
+  success while the PR remains draft.
 - PR title MUST be `[<TASK-ID>] <concise description>`.
 - PR labels MUST include `autonomous`, `autonomous:opencode`, `task:<TASK-ID>`
   (create the `task:<TASK-ID>` label if missing).
