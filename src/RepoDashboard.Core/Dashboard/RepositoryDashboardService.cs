@@ -1084,17 +1084,10 @@ public sealed class RepositoryDashboardService : IRepositoryDashboardService, ID
 
     /// <summary>
     /// Same comparison as the JSON store's duplicate rejection
-    /// (full path, trailing separators trimmed, case-insensitive),
+    /// (full path, trailing separators trimmed, OS-specific case
+    /// sensitivity via <see cref="RepositoryPathComparer"/>),
     /// duplicated here because Core must not reference Infrastructure.
     /// </summary>
     private static bool SamePath(string left, string right) =>
-        string.Equals(
-            NormalizePath(left),
-            NormalizePath(right),
-            StringComparison.OrdinalIgnoreCase);
-
-    private static string NormalizePath(string path) =>
-        Path.GetFullPath(path).TrimEnd(
-            Path.DirectorySeparatorChar,
-            Path.AltDirectorySeparatorChar);
+        Repositories.RepositoryPathComparer.Equals(left, right);
 }

@@ -4,7 +4,7 @@ namespace RepoDashboard.Core.Lifetime;
 /// Application shutdown signal (Task 44).
 /// Distinguishes <b>user Cancel</b> (per-operation, safe to ignore after a
 /// mutation commits) from <b>application shutdown</b> (must always terminate
-/// in-flight <c>git.exe</c> processes so none are orphaned).
+/// in-flight <c>git</c> processes so none are orphaned).
 /// Post-commit work (final re-inspection after a successful pull) observes
 /// only <see cref="ShutdownToken"/>: user cancellation cannot hide a
 /// committed update, while shutdown still kills the Git processes.

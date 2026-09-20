@@ -1,8 +1,8 @@
 using System.Collections.ObjectModel;
-using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using RepoDashboard.Core.Discovery;
+using RepoDashboard.Core.Repositories;
 
 namespace RepoDashboard.App.ViewModels;
 
@@ -101,25 +101,7 @@ public sealed partial class DiscoveryDialogViewModel : ObservableObject
     private static bool IsAlreadyTracked(
         string candidatePath, ISet<string> alreadyTrackedPaths)
     {
-        var normalized = Normalize(candidatePath);
-
         return alreadyTrackedPaths.Any(
-            tracked => string.Equals(
-                Normalize(tracked), normalized,
-                StringComparison.OrdinalIgnoreCase));
-    }
-
-    private static string Normalize(string path)
-    {
-        try
-        {
-            return Path.GetFullPath(path).TrimEnd(
-                Path.DirectorySeparatorChar,
-                Path.AltDirectorySeparatorChar);
-        }
-        catch
-        {
-            return path.Trim();
-        }
+            tracked => RepositoryPathComparer.Equals(tracked, candidatePath));
     }
 }

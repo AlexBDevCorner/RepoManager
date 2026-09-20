@@ -159,7 +159,7 @@ public sealed class RepositoryUpdater : IRepositoryUpdater
 
         // Mutation boundary: user cancellation is honored until the mutating
         // pull begins; once the pull starts only application shutdown can
-        // abort it. Killing git.exe mid-pull could interrupt an active
+        // abort it. Killing git mid-pull could interrupt an active
         // worktree update and leave the dashboard showing stale pre-pull
         // state for a repository that already changed on disk. The pull and
         // the final re-inspection therefore share the same shutdown-only

@@ -1,16 +1,18 @@
-using System.Windows;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.Markup.Xaml;
 
 namespace RepoDashboard.App;
 
 /// <summary>
-/// Edits a repository display name (Task 49 alias). The current name is
+/// Edits a repository display name (alias). The current name is
 /// selected on open so typing immediately replaces it. Save stays
 /// disabled for empty names; the service still owns final validation.
 /// The physical folder is never touched here.
 /// </summary>
 public partial class RenameRepositoryDialog : Window
 {
-    public string RepositoryName => NameBox.Text;
+    public string RepositoryName => NameBox.Text ?? string.Empty;
 
     public RenameRepositoryDialog(string currentName, string repositoryPath)
     {
@@ -31,11 +33,22 @@ public partial class RenameRepositoryDialog : Window
         };
     }
 
+    // Parameterless constructor for Avalonia XAML previewer.
+    public RenameRepositoryDialog()
+    {
+        InitializeComponent();
+    }
+
+    private void InitializeComponent()
+    {
+        AvaloniaXamlLoader.Load(this);
+    }
+
     private void UpdateSaveEnabled() =>
         SaveButton.IsEnabled = !string.IsNullOrWhiteSpace(NameBox.Text);
 
-    private void Save_Click(object sender, RoutedEventArgs e)
+    private void Save_Click(object? sender, RoutedEventArgs e)
     {
-        DialogResult = true;
+        Close(true);
     }
 }

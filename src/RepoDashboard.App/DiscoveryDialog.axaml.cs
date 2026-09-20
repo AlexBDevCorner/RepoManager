@@ -1,10 +1,12 @@
-using System.Windows;
+using Avalonia.Controls;
+using Avalonia.Interactivity;
+using Avalonia.Markup.Xaml;
 using RepoDashboard.App.ViewModels;
 
 namespace RepoDashboard.App;
 
 /// <summary>
-/// Confirmation checklist for repository discovery (Task 40).
+/// Confirmation checklist for repository discovery.
 /// Shows candidates — nothing is added until the user presses
 /// <c>Add Selected</c>. Already-tracked rows are pre-unchecked with
 /// an "already on dashboard" note; the view model filters them out
@@ -18,10 +20,6 @@ public partial class DiscoveryDialog : Window
         InitializeComponent();
         DataContext = viewModel;
 
-        // Review #15: ListBox.InputBindings only participate when focus
-        // is inside the ListBox. Focus it on Loaded (per WPF focus
-        // guidance) and ensure a sensible highlight so Space / arrows /
-        // Ctrl+A work immediately after open.
         Loaded += (_, _) =>
         {
             if (viewModel.SelectedOption is null)
@@ -35,8 +33,19 @@ public partial class DiscoveryDialog : Window
         };
     }
 
-    private void AddSelected_Click(object sender, RoutedEventArgs e)
+    // Parameterless constructor for Avalonia XAML previewer.
+    public DiscoveryDialog()
     {
-        DialogResult = true;
+        InitializeComponent();
+    }
+
+    private void InitializeComponent()
+    {
+        AvaloniaXamlLoader.Load(this);
+    }
+
+    private void AddSelected_Click(object? sender, RoutedEventArgs e)
+    {
+        Close(true);
     }
 }

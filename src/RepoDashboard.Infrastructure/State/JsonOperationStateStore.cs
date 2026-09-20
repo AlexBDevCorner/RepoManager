@@ -5,7 +5,9 @@ namespace RepoDashboard.Infrastructure.State;
 
 /// <summary>
 /// Persists last-successful-fetch timestamps as JSON under
-/// <c>%LOCALAPPDATA%\RepoDashboard\state.json</c>:
+/// the OS-appropriate local application data directory
+/// (<c>RepoDashboard/state.json</c> via
+/// <see cref="Environment.SpecialFolder.LocalApplicationData"/>):
 /// <code>
 /// {
 ///   "repositories": {

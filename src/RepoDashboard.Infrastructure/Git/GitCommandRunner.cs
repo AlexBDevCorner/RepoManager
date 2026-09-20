@@ -8,7 +8,7 @@ using RepoDashboard.Core.Lifetime;
 namespace RepoDashboard.Infrastructure.Git;
 
 /// <summary>
-/// Executes <c>git.exe</c> directly (never via a shell) with structured
+/// Executes <c>git</c> directly (never via a shell) with structured
 /// logging (Task 41): command, duration, exit code. Standard output and
 /// standard error are never logged — output can be large and stderr can
 /// embed credential-bearing URLs. The working directory is never logged
@@ -52,7 +52,7 @@ public sealed class GitCommandRunner : IGitCommandRunner
             cancellationToken, _shutdownToken);
         var effectiveToken = linked.Token;
 
-        // Never launch git.exe for an already-cancelled operation
+        // Never launch git for an already-cancelled operation
         // (either user Cancel or shutdown).
         effectiveToken.ThrowIfCancellationRequested();
 
@@ -85,7 +85,7 @@ public sealed class GitCommandRunner : IGitCommandRunner
         // on the async catch block below. Shutdown (Task 44) is async-void
         // and cannot await our continuation before the process exits, so
         // without this the app could race process termination and orphan
-        // git.exe. The catch block is kept as cleanup/wait.
+        // git. The catch block is kept as cleanup/wait.
         // Registered on the linked (user + shutdown) token so shutdown
         // kills even post-commit processes that ignore user Cancel.
         using var killRegistration = effectiveToken.Register(

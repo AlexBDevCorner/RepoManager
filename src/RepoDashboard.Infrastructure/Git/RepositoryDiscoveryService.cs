@@ -45,7 +45,7 @@ public sealed class RepositoryDiscoveryService : IRepositoryDiscoveryService
         }
 
         // Offload the synchronous traversal to a worker thread: the caller
-        // is the WPF UI thread, and a large tree must neither freeze the
+        // is the UI thread, and a large tree must neither freeze the
         // window nor make Cancel unusable. The token is passed both to
         // Task.Run (so an already-cancelled call never starts) and into
         // DiscoverCore (so mid-scan cancellation aborts promptly).
