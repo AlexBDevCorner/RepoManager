@@ -217,31 +217,37 @@ public sealed class MainWindowViewModelHardeningTests
     private sealed class FakeDialog(IReadOnlyList<string>? selection)
         : IDiscoveryDialogService
     {
-        public IReadOnlyList<string>? PickRepositoriesToAdd(
+        public Task<IReadOnlyList<string>?> PickRepositoriesToAddAsync(
             IReadOnlyList<DiscoveredRepository> candidates,
-            ISet<string> alreadyTrackedPaths) => selection;
+            ISet<string> alreadyTrackedPaths,
+            CancellationToken cancellationToken = default) => Task.FromResult(selection);
     }
 
     private sealed class CancelledPicker : IFolderPickerService
     {
-        public string? PickFolder(string title) => null;
+        public Task<string?> PickFolderAsync(string title, CancellationToken cancellationToken = default) =>
+            Task.FromResult<string?>(null);
 
-        public IReadOnlyList<string>? PickFolders(string title) => null;
+        public Task<IReadOnlyList<string>?> PickFoldersAsync(string title, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<string>?>(null);
     }
 
     private sealed class FixedPicker(string? path) : IFolderPickerService
     {
-        public string? PickFolder(string title) => path;
+        public Task<string?> PickFolderAsync(string title, CancellationToken cancellationToken = default) =>
+            Task.FromResult(path);
 
-        public IReadOnlyList<string>? PickFolders(string title) =>
-            path is null ? null : [path];
+        public Task<IReadOnlyList<string>?> PickFoldersAsync(string title, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<string>?>(path is null ? null : [path]);
     }
 
     private sealed class FixedMultiPicker(IReadOnlyList<string>? paths) : IFolderPickerService
     {
-        public string? PickFolder(string title) => paths?.FirstOrDefault();
+        public Task<string?> PickFolderAsync(string title, CancellationToken cancellationToken = default) =>
+            Task.FromResult(paths?.FirstOrDefault());
 
-        public IReadOnlyList<string>? PickFolders(string title) => paths;
+        public Task<IReadOnlyList<string>?> PickFoldersAsync(string title, CancellationToken cancellationToken = default) =>
+            Task.FromResult(paths);
     }
 
     /// <summary>
@@ -250,9 +256,10 @@ public sealed class MainWindowViewModelHardeningTests
     /// </summary>
     private sealed class DiscoverRootPicker(string root) : IFolderPickerService
     {
-        public string? PickFolder(string title) => root;
+        public Task<string?> PickFolderAsync(string title, CancellationToken cancellationToken = default) =>
+            Task.FromResult<string?>(root);
 
-        public IReadOnlyList<string>? PickFolders(string title) =>
+        public Task<IReadOnlyList<string>?> PickFoldersAsync(string title, CancellationToken cancellationToken = default) =>
             throw new InvalidOperationException(
                 "Discovery must use the single-folder picker.");
     }
@@ -285,9 +292,10 @@ public sealed class MainWindowViewModelHardeningTests
 
     private sealed class UnreachableDialog : IDiscoveryDialogService
     {
-        public IReadOnlyList<string>? PickRepositoriesToAdd(
+        public Task<IReadOnlyList<string>?> PickRepositoriesToAddAsync(
             IReadOnlyList<DiscoveredRepository> candidates,
-            ISet<string> alreadyTrackedPaths) =>
+            ISet<string> alreadyTrackedPaths,
+            CancellationToken cancellationToken = default) =>
             throw new InvalidOperationException(
                 "Dialog must not be reached when discovery is cancelled.");
     }

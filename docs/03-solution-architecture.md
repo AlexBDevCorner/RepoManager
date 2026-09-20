@@ -19,7 +19,7 @@ tests/
 
 ```text
 RepoDashboard.App
-    WPF
+    Avalonia
     ViewModels
     Views
     commands
@@ -35,7 +35,7 @@ RepoDashboard.Core
     application orchestration
 
 RepoDashboard.Infrastructure
-    git.exe execution
+    git execution
     filesystem
     JSON persistence
     logging

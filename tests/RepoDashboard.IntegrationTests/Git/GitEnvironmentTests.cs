@@ -44,7 +44,7 @@ public sealed class GitEnvironmentTests
             IReadOnlyList<string> arguments,
             CancellationToken cancellationToken = default)
         {
-            throw new Win32Exception("Simulated git.exe missing from PATH.");
+            throw new Win32Exception("Simulated git missing from PATH.");
         }
     }
 }

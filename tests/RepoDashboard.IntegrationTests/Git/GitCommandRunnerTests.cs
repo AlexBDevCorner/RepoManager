@@ -72,7 +72,7 @@ public sealed class GitCommandRunnerTests : IDisposable
         var act = () => _runner.ExecuteAsync(
             missingDirectory, ["--version"], cancellation.Token);
 
-        // Assert: cancellation is observed before git.exe is ever launched —
+        // Assert: cancellation is observed before git is ever launched —
         // without the guard this would throw Win32Exception for the bad
         // working directory instead.
         await act.Should().ThrowAsync<OperationCanceledException>();
@@ -111,7 +111,7 @@ public sealed class GitCommandRunnerTests : IDisposable
     {
         // Defense-in-depth: post-commit work passes a shutdown-only token
         // (or None in tests without a lifetime). The runner must still kill
-        // the process on shutdown � CancellationToken.None must never
+        // the process on shutdown � CancellationToken.None must never
         // bypass Task 44.
         var port = GetFreeTcpPort();
 

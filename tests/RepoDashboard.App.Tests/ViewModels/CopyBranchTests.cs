@@ -1,4 +1,3 @@
-using System.Windows;
 using FluentAssertions;
 using RepoDashboard.App.Services;
 using RepoDashboard.App.ViewModels;
@@ -10,12 +9,12 @@ using RepoDashboard.Core.Sync;
 namespace RepoDashboard.App.Tests.ViewModels;
 
 /// <summary>
-/// RM-003: Copy Branch copies the exact current branch name to the
-/// clipboard, stays disabled without a usable branch, and never touches
-/// Git. The dashboard and Git environment fakes are strict: any call
-/// throws, proving the action is presentation-only. Clipboard success
-/// paths run on an STA thread (a WPF requirement); disabled paths never
-/// reach the clipboard and run inline.
+/// RM-003: Copy Branch copies the exact current branch name via the
+/// testable clipboard abstraction, stays disabled without a usable branch,
+/// and never touches Git. The dashboard and Git environment fakes are
+/// strict: any call throws, proving the action is presentation-only.
+/// RM-004: the real system clipboard is never required; an in-memory fake
+/// records copied text instead of STA-thread WPF clipboard access.
 /// </summary>
 public sealed class CopyBranchTests
 {
@@ -92,9 +91,29 @@ public sealed class CopyBranchTests
 
     private sealed class CancelledPicker : IFolderPickerService
     {
-        public string? PickFolder(string title) => null;
+        public Task<string?> PickFolderAsync(string title, CancellationToken cancellationToken = default) =>
+            Task.FromResult<string?>(null);
 
-        public IReadOnlyList<string>? PickFolders(string title) => null;
+        public Task<IReadOnlyList<string>?> PickFoldersAsync(string title, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<string>?>(null);
+    }
+
+    private sealed class FakeClipboardService : IClipboardService
+    {
+        public string? LastText { get; private set; }
+
+        public bool Fail { get; set; }
+
+        public Task SetTextAsync(string text, CancellationToken cancellationToken = default)
+        {
+            if (Fail)
+            {
+                throw new InvalidOperationException("clipboard boom");
+            }
+
+            LastText = text;
+            return Task.CompletedTask;
+        }
     }
 
     private static RepositoryDashboardItem Item(
@@ -136,8 +155,14 @@ public sealed class CopyBranchTests
         };
     }
 
-    private static MainWindowViewModel CreateSut() => new(
-        new StrictGitEnvironment(), new StrictDashboard(), new CancelledPicker());
+    private static (MainWindowViewModel Sut, FakeClipboardService Clipboard) CreateSut()
+    {
+        var clipboard = new FakeClipboardService();
+        var sut = new MainWindowViewModel(
+            new StrictGitEnvironment(), new StrictDashboard(), new CancelledPicker(),
+            clipboard: clipboard);
+        return (sut, clipboard);
+    }
 
     private static RepositoryRowViewModel AddRow(
         MainWindowViewModel sut,
@@ -155,41 +180,10 @@ public sealed class CopyBranchTests
         return row;
     }
 
-    /// <summary>
-    /// WPF clipboard access requires an STA thread; xUnit runs MTA.
-    /// </summary>
-    private static T RunOnSta<T>(Func<T> action)
-    {
-        T? result = default;
-        Exception? error = null;
-        var thread = new Thread(() =>
-        {
-            try
-            {
-                result = action();
-            }
-            catch (Exception ex)
-            {
-                error = ex;
-            }
-        });
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        thread.Join();
-
-        if (error is not null)
-        {
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo
-                .Capture(error).Throw();
-        }
-
-        return result!;
-    }
-
     [Fact]
     public void CopyBranch_is_disabled_without_selection()
     {
-        var sut = CreateSut();
+        var (sut, _) = CreateSut();
 
         sut.CopyBranchCommand.CanExecute(null).Should().BeFalse();
 
@@ -204,7 +198,7 @@ public sealed class CopyBranchTests
     [InlineData("   ")]
     public void CopyBranch_is_disabled_without_usable_branch(string? branch)
     {
-        var sut = CreateSut();
+        var (sut, _) = CreateSut();
         var row = AddRow(sut, Item(branch: branch));
 
         row.Branch.Should().Be("—");
@@ -220,7 +214,7 @@ public sealed class CopyBranchTests
     [Fact]
     public void CopyBranch_is_disabled_for_detached_head()
     {
-        var sut = CreateSut();
+        var (sut, _) = CreateSut();
         var row = AddRow(sut, Item(detached: true));
 
         row.Branch.Should().Be("Detached HEAD @ a84c019");
@@ -232,7 +226,7 @@ public sealed class CopyBranchTests
     [Fact]
     public void CopyBranch_is_disabled_when_repository_is_missing()
     {
-        var sut = CreateSut();
+        var (sut, _) = CreateSut();
         var row = AddRow(sut, Item(directoryExists: false, isGitRepository: false));
 
         row.CopyableBranch.Should().BeNull();
@@ -243,7 +237,7 @@ public sealed class CopyBranchTests
     [Fact]
     public void CopyBranch_is_disabled_when_inspection_failed()
     {
-        var sut = CreateSut();
+        var (sut, _) = CreateSut();
         var row = AddRow(
             sut, Item(inspectionError: "git status unexpectedly failed"));
 
@@ -255,7 +249,7 @@ public sealed class CopyBranchTests
     [Fact]
     public void CopyBranch_is_disabled_while_busy()
     {
-        var sut = CreateSut();
+        var (sut, _) = CreateSut();
         var row = AddRow(sut, Item(branch: "feature/foo"));
 
         row.CopyableBranch.Should().Be("feature/foo");
@@ -268,7 +262,7 @@ public sealed class CopyBranchTests
     [Fact]
     public void CopyBranch_is_enabled_for_valid_branch()
     {
-        var sut = CreateSut();
+        var (sut, _) = CreateSut();
         var row = AddRow(sut, Item(branch: "feature/foo"));
 
         sut.CopyBranchCommand.CanExecute(null).Should().BeTrue();
@@ -278,7 +272,7 @@ public sealed class CopyBranchTests
     [Fact]
     public void CopyBranch_accepts_explicit_target_without_selection()
     {
-        var sut = CreateSut();
+        var (sut, _) = CreateSut();
         var target = new RepositoryRowViewModel(Item(branch: "feature/foo"));
 
         sut.CopyBranchCommand.CanExecute(null).Should().BeFalse();
@@ -286,41 +280,46 @@ public sealed class CopyBranchTests
     }
 
     [Fact]
-    public void CopyBranch_copies_exact_branch_without_git()
+    public async Task CopyBranch_copies_exact_branch_without_git()
     {
-        var sut = CreateSut();
+        var (sut, clipboard) = CreateSut();
         AddRow(sut, Item(branch: "feature/foo"));
 
         // Never initialized: Git availability was never queried and the
         // action still works from already-mapped presentation state.
         sut.IsGitAvailable.Should().BeFalse();
 
-        var (status, clipboard) = RunOnSta(() =>
-        {
-            sut.CopyBranchCommand.Execute(null);
-            return (sut.StatusText, Clipboard.GetText());
-        });
+        await sut.CopyBranchCommand.ExecuteAsync(null);
 
-        status.Should().Be("Copied branch 'feature/foo'.");
-        clipboard.Should().Be("feature/foo");
+        sut.StatusText.Should().Be("Copied branch 'feature/foo'.");
+        clipboard.LastText.Should().Be("feature/foo");
     }
 
     [Fact]
-    public void CopyBranch_uses_explicit_target_not_selection()
+    public async Task CopyBranch_uses_explicit_target_not_selection()
     {
-        var sut = CreateSut();
+        var (sut, clipboard) = CreateSut();
         AddRow(sut, Item(name: "Store", branch: "main"));
         var target = AddRow(
             sut, Item(name: "Legacy", branch: "feature/foo"), select: false);
 
-        var (status, clipboard) = RunOnSta(() =>
-        {
-            sut.CopyBranchCommand.Execute(target);
-            return (sut.StatusText, Clipboard.GetText());
-        });
+        await sut.CopyBranchCommand.ExecuteAsync(target);
 
-        status.Should().Be("Copied branch 'feature/foo'.");
-        clipboard.Should().Be("feature/foo");
+        sut.StatusText.Should().Be("Copied branch 'feature/foo'.");
+        clipboard.LastText.Should().Be("feature/foo");
+    }
+
+    [Fact]
+    public async Task CopyBranch_clipboard_failure_reports_status()
+    {
+        var (sut, clipboard) = CreateSut();
+        clipboard.Fail = true;
+        AddRow(sut, Item(branch: "feature/foo"));
+
+        await sut.CopyBranchCommand.ExecuteAsync(null);
+
+        sut.StatusText.Should().Contain("Could not copy branch");
+        clipboard.LastText.Should().BeNull();
     }
 
     [Fact]
@@ -348,19 +347,27 @@ public sealed class CopyBranchTests
     }
 
     [Fact]
-    public void CopyPath_behavior_is_unchanged()
+    public async Task CopyPath_behavior_is_unchanged()
     {
         // RM-003 acceptance: existing Copy Path behavior is preserved.
-        var sut = CreateSut();
+        var (sut, clipboard) = CreateSut();
         AddRow(sut, Item(name: "Store", branch: "feature/foo"));
 
-        var (status, clipboard) = RunOnSta(() =>
-        {
-            sut.CopyPathCommand.Execute(null);
-            return (sut.StatusText, Clipboard.GetText());
-        });
+        await sut.CopyPathCommand.ExecuteAsync(null);
 
-        status.Should().Be("Copied path for 'Store'.");
-        clipboard.Should().Be("""C:\Source\Repos\Store""");
+        sut.StatusText.Should().Be("Copied path for 'Store'.");
+        clipboard.LastText.Should().Be("""C:\Source\Repos\Store""");
+    }
+
+    [Fact]
+    public async Task CopyPath_clipboard_failure_reports_status()
+    {
+        var (sut, clipboard) = CreateSut();
+        clipboard.Fail = true;
+        AddRow(sut, Item(name: "Store", branch: "feature/foo"));
+
+        await sut.CopyPathCommand.ExecuteAsync(null);
+
+        sut.StatusText.Should().Contain("Could not copy path");
     }
 }

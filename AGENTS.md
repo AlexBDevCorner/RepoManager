@@ -7,10 +7,10 @@ spec wins for *what* to build, this file wins for *how* to build it.
 
 ## Project overview
 
-Windows desktop dashboard for managing and monitoring multiple local Git
+Cross-platform desktop dashboard for managing and monitoring multiple local Git
 repositories. Quick overview: branch, clean/dirty tree, ahead/behind upstream
 and remote default, last fetch, update eligibility — plus conservative
-fast-forward updates.
+fast-forward updates. Runs on Windows and Linux via Avalonia.
 
 > **Safety principle:** inspect freely, fetch freely, but mutate the
 > checked-out branch only when a safe fast-forward is proven. The final
@@ -22,26 +22,26 @@ rebase, reset, stash, conflict resolution, cloning, or history browsing.
 ## Solution layout
 
 ```text
-src/RepoDashboard.App/             WPF presentation (net10.0-windows, WinExe)
-  Services/ ViewModels/ Views/     Views + dialogs, view-models, DI composition root
+src/RepoDashboard.App/             Avalonia presentation (net10.0, WinExe)
+  Services/ ViewModels/            Windows + dialogs, view-models, DI composition root
 src/RepoDashboard.Core/            Domain + application logic (net10.0)
   Dashboard/ Discovery/ Git/       Inspection, discovery, sync orchestration
   Lifetime/ Models/                models, operational state
   Repositories/ State/ Sync/
 src/RepoDashboard.Infrastructure/  External systems (net10.0)
-  git.exe execution, JSON persistence
+  git execution, JSON persistence
 tests/
   RepoDashboard.Core.Tests/        unit tests
   RepoDashboard.App.Tests/         view-model tests
-  RepoDashboard.IntegrationTests/  real temp git repos, real git.exe behavior
+  RepoDashboard.IntegrationTests/  real temp git repos, real git behavior
 docs/                              design docs; 07-architectural-rules.md is normative
 RepoDashboard.slnx                 solution (new .slnx format, needs .NET 10 SDK)
 ```
 
 Dependency direction: `App -> Core`, `App -> Infrastructure`,
-`Infrastructure -> Core`. **Core has no dependency on WPF or Infrastructure.**
+`Infrastructure -> Core`. **Core has no dependency on Avalonia or Infrastructure.**
 
-## Build / test / run (Windows)
+## Build / test / run (Windows and Linux)
 
 ```powershell
 dotnet build RepoDashboard.slnx
@@ -51,12 +51,13 @@ dotnet run --project src/RepoDashboard.App
 
 - .NET 10 SDK, no `global.json`. Self-contained publish:
   `dotnet publish src/RepoDashboard.App -c Release -r win-x64 --self-contained true`
+  Linux: `dotnet publish src/RepoDashboard.App -c Release -r linux-x64 --self-contained true`
 - `dotnet test RepoDashboard.slnx` (full suite) is **required verification**
   for every behavior change. Quote commands + results in the PR.
 
 ## Architecture rules (normative, see `docs/07-architectural-rules.md`)
 
-1. WPF code must never invoke `git.exe`. Only Infrastructure does that.
+1. Avalonia code must never invoke `git`. Only Infrastructure does that.
 2. `GitCommandRunner` knows only working directory, arguments, stdout,
    stderr, exit code. No Git business concepts (fetch/pull/ahead/behind).
 3. `RepositoryInspector` is read-only. Never fetch/pull/checkout/merge/
@@ -80,7 +81,7 @@ dotnet run --project src/RepoDashboard.App
 - MVVM via CommunityToolkit.Mvvm; DI/hosting via
   Microsoft.Extensions.Hosting + DependencyInjection; logging via `ILogger`
   (no `Console` writes in app code).
-- All Git access goes through the Infrastructure `git.exe` process wrapper.
+- All Git access goes through the Infrastructure `git` process wrapper.
   Never LibGit2Sharp, never shell-outs via PowerShell/cmd.
 - No secrets, tokens, or machine-specific paths in code or tests.
 
@@ -90,9 +91,10 @@ dotnet run --project src/RepoDashboard.App
 - Integration tests create temporary Git repositories and exercise real Git
   behavior — do not mock Git for the behavior under test.
 - Add/update tests with every behavior change. Keep tests deterministic
-  (no wall-clock, network, or `%LOCALAPPDATA%` dependencies).
+  (no wall-clock, network, or local-application-data dependencies).
 - Config/state persistence tests must isolate storage (temp dirs), never the
-  real `%LOCALAPPDATA%\RepoDashboard\`.
+  real local application data directory (`%LOCALAPPDATA%\RepoDashboard\` on
+  Windows, `~/.local/share/RepoDashboard/` on Linux).
 
 ## Autonomous worker rules (OpenCode, dispatched via `autonomous-worker.yml`)
 

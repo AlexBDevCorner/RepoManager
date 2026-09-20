@@ -1,6 +1,7 @@
 using FluentAssertions;
 using RepoDashboard.App.ViewModels;
 using RepoDashboard.Core.Discovery;
+using RepoDashboard.Core.Repositories;
 
 namespace RepoDashboard.App.Tests.ViewModels;
 
@@ -14,7 +15,7 @@ public sealed class DiscoveryDialogViewModelTests
     {
         var sut = new DiscoveryDialogViewModel(
             [Repo("Store"), Repo("Viewer")],
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            new HashSet<string>(RepositoryPathComparer.Comparer));
 
         sut.Options.Should().HaveCount(2);
         sut.Options.Should().OnlyContain(o => o.IsChecked);
@@ -29,7 +30,7 @@ public sealed class DiscoveryDialogViewModelTests
     {
         var sut = new DiscoveryDialogViewModel(
             [Repo("Store"), Repo("Viewer")],
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            new HashSet<string>(RepositoryPathComparer.Comparer)
             {
                 """C:\Source\Repos\Store"""
             });
@@ -45,17 +46,35 @@ public sealed class DiscoveryDialogViewModelTests
     }
 
     [Fact]
-    public void Already_tracked_match_is_case_and_separator_insensitive()
+    public void Already_tracked_match_is_separator_insensitive_and_os_case_sensitive()
     {
-        var sut = new DiscoveryDialogViewModel(
+        // RM-004: trailing separators are always ignored; case sensitivity
+        // follows the OS (insensitive on Windows, sensitive on Linux).
+        var trailingSeparator = new DiscoveryDialogViewModel(
             [Repo("Store")],
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            new HashSet<string>(RepositoryPathComparer.Comparer)
             {
-                """c:\source\repos\store\"""
+                """C:\Source\Repos\Store\"""
             });
 
-        sut.Options.Single().IsAlreadyTracked.Should().BeTrue();
-        sut.SelectedPaths.Should().BeEmpty();
+        trailingSeparator.Options.Single().IsAlreadyTracked.Should().BeTrue();
+        trailingSeparator.SelectedPaths.Should().BeEmpty();
+
+        var differentCase = new DiscoveryDialogViewModel(
+            [Repo("Store")],
+            new HashSet<string>(RepositoryPathComparer.Comparer)
+            {
+                """c:\source\repos\store"""
+            });
+
+        if (OperatingSystem.IsWindows())
+        {
+            differentCase.Options.Single().IsAlreadyTracked.Should().BeTrue();
+        }
+        else
+        {
+            differentCase.Options.Single().IsAlreadyTracked.Should().BeFalse();
+        }
     }
 
     [Fact]
@@ -63,7 +82,7 @@ public sealed class DiscoveryDialogViewModelTests
     {
         var sut = new DiscoveryDialogViewModel(
             [Repo("Store")],
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            new HashSet<string>(RepositoryPathComparer.Comparer));
 
         sut.Options.Single().IsChecked = false;
 
@@ -76,7 +95,7 @@ public sealed class DiscoveryDialogViewModelTests
         // Task 52: Space toggles the ListBox-selected row.
         var sut = new DiscoveryDialogViewModel(
             [Repo("Store")],
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            new HashSet<string>(RepositoryPathComparer.Comparer));
         sut.SelectedOption = sut.Options.Single();
 
         sut.ToggleSelectedCommand.CanExecute(null).Should().BeTrue();
@@ -95,7 +114,7 @@ public sealed class DiscoveryDialogViewModelTests
     {
         var sut = new DiscoveryDialogViewModel(
             [Repo("Store"), Repo("Viewer")],
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            new HashSet<string>(RepositoryPathComparer.Comparer)
             {
                 """C:\Source\Repos\Store"""
             });
@@ -122,7 +141,7 @@ public sealed class DiscoveryDialogViewModelTests
         // Space / arrows / Ctrl+A work immediately.
         var sut = new DiscoveryDialogViewModel(
             [Repo("Store"), Repo("Viewer")],
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            new HashSet<string>(RepositoryPathComparer.Comparer)
             {
                 """C:\Source\Repos\Store"""
             });
@@ -136,7 +155,7 @@ public sealed class DiscoveryDialogViewModelTests
     {
         var sut = new DiscoveryDialogViewModel(
             [Repo("Store")],
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            new HashSet<string>(RepositoryPathComparer.Comparer)
             {
                 """C:\Source\Repos\Store"""
             });
@@ -150,7 +169,7 @@ public sealed class DiscoveryDialogViewModelTests
     {
         var sut = new DiscoveryDialogViewModel(
             [],
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            new HashSet<string>(RepositoryPathComparer.Comparer));
 
         sut.SelectedOption.Should().BeNull();
         sut.ToggleSelectedCommand.CanExecute(null).Should().BeFalse();
@@ -162,7 +181,7 @@ public sealed class DiscoveryDialogViewModelTests
         // Task 52: Ctrl+A respects IsSelectable — duplicates stay out.
         var sut = new DiscoveryDialogViewModel(
             [Repo("Store"), Repo("Viewer")],
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            new HashSet<string>(RepositoryPathComparer.Comparer)
             {
                 """C:\Source\Repos\Store"""
             });
@@ -181,7 +200,7 @@ public sealed class DiscoveryDialogViewModelTests
         // Task 52: Ctrl+Shift+A clears available rows, never tracked ones.
         var sut = new DiscoveryDialogViewModel(
             [Repo("Store"), Repo("Viewer")],
-            new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            new HashSet<string>(RepositoryPathComparer.Comparer));
 
         sut.ClearSelectionCommand.Execute(null);
 

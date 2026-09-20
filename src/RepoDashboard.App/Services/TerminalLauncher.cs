@@ -15,13 +15,16 @@ public sealed class TerminalLauncher : ITerminalLauncher
     private readonly Lazy<bool> _isAvailable;
     private readonly Func<string?> _terminalEnvironment;
     private readonly Func<string, bool> _executableExists;
+    private readonly Func<bool> _isWindows;
 
     public TerminalLauncher(
         Func<string?>? terminalEnvironment = null,
-        Func<string, bool>? executableExists = null)
+        Func<string, bool>? executableExists = null,
+        Func<bool>? isWindows = null)
     {
         _terminalEnvironment = terminalEnvironment ?? (() => Environment.GetEnvironmentVariable("TERMINAL"));
         _executableExists = executableExists ?? ExecutableExistsOnPath;
+        _isWindows = isWindows ?? OperatingSystem.IsWindows;
         _isAvailable = new Lazy<bool>(DetectAvailability);
     }
 
@@ -56,7 +59,7 @@ public sealed class TerminalLauncher : ITerminalLauncher
 
     private ProcessStartInfo BuildStartInfo(string workingDirectory)
     {
-        if (OperatingSystem.IsWindows())
+        if (_isWindows())
         {
             return new ProcessStartInfo
             {
@@ -110,7 +113,7 @@ public sealed class TerminalLauncher : ITerminalLauncher
     {
         try
         {
-            if (OperatingSystem.IsWindows())
+            if (_isWindows())
             {
                 return _executableExists("wt.exe");
             }

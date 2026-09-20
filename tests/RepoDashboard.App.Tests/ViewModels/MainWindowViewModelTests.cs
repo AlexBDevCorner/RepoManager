@@ -218,25 +218,28 @@ public sealed class MainWindowViewModelTests
 
     private sealed class CancelledPicker : IFolderPickerService
     {
-        public string? PickFolder(string title) => null;
+        public Task<string?> PickFolderAsync(string title, CancellationToken cancellationToken = default) =>
+            Task.FromResult<string?>(null);
 
-        public IReadOnlyList<string>? PickFolders(string title) => null;
+        public Task<IReadOnlyList<string>?> PickFoldersAsync(string title, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<string>?>(null);
     }
 
     private sealed class FixedNameDialog(string? name) : IRepositoryNameDialogService
     {
         public int Calls { get; private set; }
 
-        public string? RequestName(string currentName, string repositoryPath)
+        public Task<string?> RequestNameAsync(string currentName, string repositoryPath, CancellationToken cancellationToken = default)
         {
             Calls++;
-            return name;
+            return Task.FromResult(name);
         }
     }
 
     private sealed class FixedRemovalConfirmation(bool confirmed) : IRepositoryRemovalConfirmationService
     {
-        public bool ConfirmRemoval(string repositoryName, string repositoryPath) => confirmed;
+        public Task<bool> ConfirmRemovalAsync(string repositoryName, string repositoryPath, CancellationToken cancellationToken = default) =>
+            Task.FromResult(confirmed);
     }
 
     private static RepositoryDashboardItem Item(string name)
