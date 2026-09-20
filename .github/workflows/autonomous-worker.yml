@@ -57,7 +57,7 @@ jobs:
   worker:
     if: github.ref == 'refs/heads/master'
     runs-on: windows-latest
-    timeout-minutes: 50
+    timeout-minutes: 135
     env:
       GH_REPO: ${{ github.repository }}
       TASK_ID: ${{ inputs.task_id }}
@@ -170,7 +170,7 @@ jobs:
       # verify job on a fresh runner, so files or runner state mutated here
       # cannot affect the verifier's code or environment.
       - name: Run OpenCode worker
-        timeout-minutes: 35
+        timeout-minutes: 120
         uses: anomalyco/opencode/github@83abc64a5c4e0e0a5157f2c4435d34131009a404 # pinned 2026-09-19
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
