@@ -113,10 +113,12 @@ dotnet run --project src/RepoDashboard.App
   such as `checkpoint: migrate main window` or
   `checkpoint: adapt app tests`. Do not squash checkpoint commits merely to
   make history look cleaner.
-- After the first pushed checkpoint that creates a diff from `master`, open
-  exactly ONE draft PR to `master`. Keep updating and pushing to that same PR
-  while implementation is in progress. Mark the PR ready for review only after
-  the required verification has run and the task is genuinely ready for review.
+- For a new implementation with no existing PR, after the first pushed
+  checkpoint that creates a diff from `master`, open exactly ONE draft PR to
+  `master`. Keep updating and pushing to that same PR while implementation is
+  in progress. On retries/corrections, reuse the existing PR and preserve its
+  current draft/ready state while working. Mark a new draft PR ready for review
+  only after the required verification has run and the task is genuinely ready.
 - PR title MUST be `[<TASK-ID>] <concise description>`.
 - PR labels MUST include `autonomous`, `autonomous:opencode`, `task:<TASK-ID>`
   (create the `task:<TASK-ID>` label if missing).
