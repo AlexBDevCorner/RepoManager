@@ -226,8 +226,10 @@ jobs:
             - Do not squash checkpoint commits just to clean up history; the implementation history is useful.
             For a new implementation with no existing PR, after the first pushed checkpoint that creates a diff from master,
             open exactly one draft PR and keep pushing subsequent checkpoints to that same branch and PR.
-            On retries or corrections, reuse the existing PR and preserve its current draft/ready state while working.
-            Mark a new draft PR ready for review only after the required verification has run and the task is genuinely ready.
+            On retries or corrections, reuse the existing PR.
+            A successful worker run MUST leave the task PR ready for review, never draft.
+            After all required verification has run and the task is genuinely ready, explicitly mark the PR ready for review
+            (for example with gh pr ready <number>) before finishing. Do not report success while the PR remains draft.
             For correction: check out the existing autonomous/${{ inputs.task_id }} branch.
             Read blocking-review.json in RUNNER_TEMP. Fix only blocking findings from that review.
             The reviewed head is ${{ inputs.expected_head }}. Do not implement unrelated work.
