@@ -224,9 +224,10 @@ jobs:
             - Checkpoint commits may be incomplete and should use descriptive messages such as
               "checkpoint: migrate main window" or "checkpoint: adapt app tests".
             - Do not squash checkpoint commits just to clean up history; the implementation history is useful.
-            After the first pushed checkpoint that creates a diff from master, open exactly one draft PR.
-            Keep pushing subsequent checkpoints to that same branch and PR.
-            Mark the PR ready for review only after the required verification has run and the task is genuinely ready.
+            For a new implementation with no existing PR, after the first pushed checkpoint that creates a diff from master,
+            open exactly one draft PR and keep pushing subsequent checkpoints to that same branch and PR.
+            On retries or corrections, reuse the existing PR and preserve its current draft/ready state while working.
+            Mark a new draft PR ready for review only after the required verification has run and the task is genuinely ready.
             For correction: check out the existing autonomous/${{ inputs.task_id }} branch.
             Read blocking-review.json in RUNNER_TEMP. Fix only blocking findings from that review.
             The reviewed head is ${{ inputs.expected_head }}. Do not implement unrelated work.
