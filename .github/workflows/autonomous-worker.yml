@@ -215,7 +215,18 @@ jobs:
             than attempting to recover credentials from Git configuration.
             Execution mode: ${{ inputs.mode }}.
             For implementation: use branch autonomous/${{ inputs.task_id }} from master.
-            If its open PR exists, reuse that branch and PR. Never create a second PR.
+            Push that branch to origin immediately after creating it.
+            If its open PR exists, reuse that branch and PR. Never create a second branch or PR.
+            Preserve progress remotely throughout the run:
+            - Commit and push after every meaningful milestone.
+            - If a milestone takes longer, make and push a checkpoint at least every 10–15 minutes.
+            - Do not wait until the task is complete before the first commit or push.
+            - Checkpoint commits may be incomplete and should use descriptive messages such as
+              "checkpoint: migrate main window" or "checkpoint: adapt app tests".
+            - Do not squash checkpoint commits just to clean up history; the implementation history is useful.
+            After the first pushed checkpoint that creates a diff from master, open exactly one draft PR.
+            Keep pushing subsequent checkpoints to that same branch and PR.
+            Mark the PR ready for review only after the required verification has run and the task is genuinely ready.
             For correction: check out the existing autonomous/${{ inputs.task_id }} branch.
             Read blocking-review.json in RUNNER_TEMP. Fix only blocking findings from that review.
             The reviewed head is ${{ inputs.expected_head }}. Do not implement unrelated work.
