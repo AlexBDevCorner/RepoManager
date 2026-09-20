@@ -4,7 +4,7 @@ Enforce during code review. Worth putting into `AGENTS.md` or developer document
 
 ## Rule 1
 
-WPF code must never invoke `git.exe`. Only Infrastructure does that.
+Avalonia code must never invoke `git`. Only Infrastructure does that.
 
 ## Rule 2
 

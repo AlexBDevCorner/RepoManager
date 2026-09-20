@@ -1,6 +1,6 @@
 # RepoManager
 
-A Windows desktop dashboard for managing and monitoring multiple local Git repositories from one place.
+A cross-platform desktop dashboard for managing and monitoring multiple local Git repositories from one place. Runs on Windows and Linux via Avalonia.
 
 RepoManager gives you a quick overview of the repositories you actively work with: which branch is checked out, whether the working tree is clean, whether the branch is ahead or behind its upstream, when the repository was last fetched, and whether it can be updated safely.
 
@@ -133,7 +133,7 @@ In the discovery dialog: `Up` / `Down` chooses a repository, `Space` toggles it,
 
 Long-running batch operations can be cancelled.
 
-RepoManager distinguishes between cancelling normal work and shutting down the application. In particular, once a mutating fast-forward update has reached its critical Git operation, ordinary user cancellation will not terminate `git.exe` halfway through that mutation.
+RepoManager distinguishes between cancelling normal work and shutting down the application. In particular, once a mutating fast-forward update has reached its critical Git operation, ordinary user cancellation will not terminate `git` halfway through that mutation.
 
 Application shutdown cancels outstanding Git processes and performs cleanup to avoid leaving orphaned processes behind.
 
@@ -166,21 +166,21 @@ The goal is a **repository status dashboard and safe updater**, not a general-pu
 
 ### Running from source
 
-* Windows
+* Windows or Linux
 * [.NET 10 SDK](https://dotnet.microsoft.com/)
-* Git for Windows available through `git.exe`
+* Git available through `git` on PATH
 
-The application is built with WPF and targets:
+The application is built with Avalonia and targets:
 
 ```text
-net10.0-windows
+net10.0
 ```
 
 ### Published build
 
-RepoManager can be published as a self-contained Windows x64 application, so the target machine does not need the .NET runtime installed separately.
+RepoManager can be published as a self-contained Windows x64 or Linux x64 application, so the target machine does not need the .NET runtime installed separately.
 
-Git is still required because RepoManager intentionally uses the installed `git.exe` rather than embedding its own Git implementation.
+Git is still required because RepoManager intentionally uses the installed `git` rather than embedding its own Git implementation.
 
 ## Running from source
 
@@ -203,7 +203,7 @@ Or build the complete solution first:
 dotnet build RepoDashboard.slnx
 ```
 
-## Creating a Windows build
+## Creating Windows and Linux builds
 
 Create a self-contained Windows x64 build with:
 
@@ -211,7 +211,13 @@ Create a self-contained Windows x64 build with:
 dotnet publish src/RepoDashboard.App -c Release -r win-x64 --self-contained true
 ```
 
-The resulting publish directory contains the Windows executable and everything required by the .NET application.
+Create a self-contained Linux x64 build with:
+
+```powershell
+dotnet publish src/RepoDashboard.App -c Release -r linux-x64 --self-contained true
+```
+
+The resulting publish directory contains the platform executable and everything required by the .NET application.
 
 ## Testing
 
@@ -241,10 +247,12 @@ Integration tests create temporary Git repositories and exercise real Git behavi
 
 ## Configuration and local data
 
-RepoManager stores its own configuration under:
+RepoManager stores its own configuration under the OS-appropriate local
+application data directory (via .NET `Environment.SpecialFolder.LocalApplicationData`):
 
 ```text
-%LOCALAPPDATA%\RepoDashboard\
+%LOCALAPPDATA%\RepoDashboard\   (Windows)
+~/.local/share/RepoDashboard/   (Linux)
 ```
 
 ### `repositories.json`
@@ -277,7 +285,7 @@ src/
 
 ### `RepoDashboard.App`
 
-WPF presentation layer.
+Avalonia presentation layer (Windows + Linux).
 
 Contains:
 
@@ -299,7 +307,7 @@ Contains:
 * Discovery abstractions
 * Domain models
 
-Core has no dependency on WPF or Infrastructure.
+Core has no dependency on Avalonia or Infrastructure.
 
 ### `RepoDashboard.Infrastructure`
 
@@ -307,7 +315,7 @@ External-system implementations.
 
 Contains:
 
-* `git.exe` process execution
+* `git` process execution
 * JSON persistence
 * Operational state persistence
 
@@ -317,7 +325,7 @@ Git commands are executed directly through `System.Diagnostics.Process`. RepoMan
 
 * .NET 10
 * C#
-* WPF
+* Avalonia
 * CommunityToolkit.Mvvm
 * Microsoft.Extensions.Hosting
 * Microsoft.Extensions.DependencyInjection
@@ -353,7 +361,7 @@ More detailed design documentation is available under [`docs/`](docs/):
 
 ## Project status
 
-RepoManager is functional as a Windows repository dashboard and safe updater.
+RepoManager is functional as a cross-platform repository dashboard and safe updater.
 
 The current application supports the complete workflow of:
 

@@ -2,7 +2,7 @@
 
 ```mermaid
 flowchart TD
-    UI[WPF UI]
+    UI[Avalonia UI]
 
     VM[ViewModels]
 
@@ -15,7 +15,7 @@ flowchart TD
     Config[Repository Configuration Store]
     Git[Git Command Runner]
 
-    EXE[git.exe]
+    EXE[git]
     JSON[repositories.json]
 
     UI --> VM

@@ -8,7 +8,7 @@ namespace RepoDashboard.IntegrationTests.Git;
 
 /// <summary>
 /// Complete integration matrix (Task 45): all 14 ticket scenarios against
-/// real git.exe via <see cref="GitTestRepositoryFactory"/>. Each scenario
+/// real git via <see cref="GitTestRepositoryFactory"/>. Each scenario
 /// builds its own throwaway remote + clones so tests stay independent.
 /// </summary>
 public sealed class RepositoryLifecycleMatrixTests

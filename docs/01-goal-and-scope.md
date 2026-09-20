@@ -2,7 +2,7 @@
 
 ## Goal
 
-Build a Windows desktop application that monitors a manually selected set of local Git repositories and makes it easy to understand their current state.
+Build a cross-platform desktop application (Windows + Linux via Avalonia) that monitors a manually selected set of local Git repositories and makes it easy to understand their current state.
 
 The application should answer questions such as:
 

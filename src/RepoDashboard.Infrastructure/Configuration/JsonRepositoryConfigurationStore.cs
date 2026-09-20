@@ -6,7 +6,9 @@ namespace RepoDashboard.Infrastructure.Configuration;
 
 /// <summary>
 /// Persists <see cref="RepositoryConfiguration"/> entries as JSON under
-/// <c>%LOCALAPPDATA%\RepoDashboard\repositories.json</c>.
+/// the OS-appropriate local application data directory
+/// (<c>RepoDashboard/repositories.json</c> via
+/// <see cref="Environment.SpecialFolder.LocalApplicationData"/>).
 /// Stores only user configuration, never transient Git state.
 /// Saves are atomic (write <c>.tmp</c>, then replace) so a crash
 /// cannot leave half-written JSON.
@@ -91,7 +93,7 @@ public sealed class JsonRepositoryConfigurationStore : IRepositoryConfigurationS
     private static void ThrowOnDuplicatePaths(
         IReadOnlyCollection<RepositoryConfiguration> repositories)
     {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<string>(RepositoryPathComparer.Comparer);
 
         foreach (var repository in repositories)
         {
@@ -101,19 +103,13 @@ public sealed class JsonRepositoryConfigurationStore : IRepositoryConfigurationS
             {
                 throw new InvalidOperationException(
                     $"Duplicate repository path: '{repository.Path}'. " +
-                    "Paths are compared case-insensitively after normalisation.");
+                    "Paths are compared after normalisation with OS-specific case sensitivity.");
             }
         }
     }
 
-    internal static string NormalizePath(string path)
-    {
-        var fullPath = Path.GetFullPath(path);
-
-        return fullPath.TrimEnd(
-            Path.DirectorySeparatorChar,
-            Path.AltDirectorySeparatorChar);
-    }
+    internal static string NormalizePath(string path) =>
+        RepositoryPathComparer.Normalize(path);
 
     private sealed class RepositoryStoreDocument
     {

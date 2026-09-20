@@ -1,7 +1,5 @@
 using System.Collections.ObjectModel;
-using System.Diagnostics;
 using System.IO;
-using System.Windows;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using RepoDashboard.App.Services;
@@ -9,6 +7,7 @@ using RepoDashboard.Core.Dashboard;
 using RepoDashboard.Core.Discovery;
 using RepoDashboard.Core.Git;
 using RepoDashboard.Core.Lifetime;
+using RepoDashboard.Core.Repositories;
 using RepoDashboard.Core.Sync;
 
 namespace RepoDashboard.App.ViewModels;
@@ -21,7 +20,7 @@ namespace RepoDashboard.App.ViewModels;
 /// Cancellation (Task 43): every long operation runs under a linked
 /// <see cref="CancellationTokenSource"/> held in <c>_activeOperation</c>.
 /// <see cref="CancelCommand"/> cancels it: pending repositories never start
-/// (lock/semaphore waits observe the token), the running git.exe is killed
+/// (lock/semaphore waits observe the token), the running git process is killed
 /// by the command runner, completed rows keep their results, and locks are
 /// always released via finally blocks in the dashboard service.
 /// </summary>
@@ -34,6 +33,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly IDiscoveryDialogService _discoveryDialog;
     private readonly IRepositoryNameDialogService _repositoryNameDialog;
     private readonly IRepositoryRemovalConfirmationService _removalConfirmation;
+    private readonly IClipboardService _clipboard;
+    private readonly IFolderLauncher _folderLauncher;
+    private readonly ITerminalLauncher _terminalLauncher;
+    private readonly IKeyboardShortcutsDialogService _shortcutHelp;
 
     /// <summary>
     /// The currently running operation, if any. Cancelled by
@@ -124,7 +127,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
         IDiscoveryDialogService? discoveryDialog = null,
         IApplicationShutdown? applicationShutdown = null,
         IRepositoryNameDialogService? repositoryNameDialog = null,
-        IRepositoryRemovalConfirmationService? removalConfirmation = null)
+        IRepositoryRemovalConfirmationService? removalConfirmation = null,
+        IClipboardService? clipboard = null,
+        IFolderLauncher? folderLauncher = null,
+        ITerminalLauncher? terminalLauncher = null,
+        IKeyboardShortcutsDialogService? shortcutHelp = null)
     {
         ArgumentNullException.ThrowIfNull(gitEnvironment);
         ArgumentNullException.ThrowIfNull(dashboard);
@@ -137,6 +144,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _applicationShutdown = applicationShutdown;
         _repositoryNameDialog = repositoryNameDialog ?? new StubRepositoryNameDialogService();
         _removalConfirmation = removalConfirmation ?? new StubRemovalConfirmationService();
+        _clipboard = clipboard ?? new StubClipboardService();
+        _folderLauncher = folderLauncher ?? new StubFolderLauncher();
+        _terminalLauncher = terminalLauncher ?? new StubTerminalLauncher();
+        _shortcutHelp = shortcutHelp ?? new StubShortcutHelpService();
     }
 
     /// <summary>
@@ -189,7 +200,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// <summary>
     /// Signals application shutdown (Task 44): no new operations may start
     /// (their linked token is already cancelled) and the running operation
-    /// is cancelled so its git.exe process tree is killed. Notifies the
+    /// is cancelled so its git process tree is killed. Notifies the
     /// shared lifetime first so post-commit stages observing only shutdown
     /// are also terminated.
     /// </summary>
@@ -225,16 +236,20 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     private sealed class StubDiscoveryDialogService : IDiscoveryDialogService
     {
-        public IReadOnlyList<string>? PickRepositoriesToAdd(
+        public Task<IReadOnlyList<string>?> PickRepositoriesToAddAsync(
             IReadOnlyList<DiscoveredRepository> candidates,
-            ISet<string> alreadyTrackedPaths) => null;
+            ISet<string> alreadyTrackedPaths,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<string>?>(null);
     }
 
     private sealed class StubRepositoryNameDialogService : IRepositoryNameDialogService
     {
-        public string? RequestName(
+        public Task<string?> RequestNameAsync(
             string currentName,
-            string repositoryPath) => null;
+            string repositoryPath,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<string?>(null);
     }
 
     /// <summary>
@@ -244,9 +259,37 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// </summary>
     private sealed class StubRemovalConfirmationService : IRepositoryRemovalConfirmationService
     {
-        public bool ConfirmRemoval(
+        public Task<bool> ConfirmRemovalAsync(
             string repositoryName,
-            string repositoryPath) => false;
+            string repositoryPath,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(false);
+    }
+
+    private sealed class StubClipboardService : IClipboardService
+    {
+        public Task SetTextAsync(string text, CancellationToken cancellationToken = default) =>
+            Task.FromException(new InvalidOperationException("Clipboard is unavailable."));
+    }
+
+    private sealed class StubFolderLauncher : IFolderLauncher
+    {
+        public void OpenFolder(string path) =>
+            throw new InvalidOperationException("Folder opening is unavailable.");
+    }
+
+    private sealed class StubTerminalLauncher : ITerminalLauncher
+    {
+        public bool IsAvailable => false;
+
+        public void OpenTerminal(string workingDirectory) =>
+            throw new InvalidOperationException("No supported terminal was found.");
+    }
+
+    private sealed class StubShortcutHelpService : IKeyboardShortcutsDialogService
+    {
+        public Task ShowAsync(CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
     }
 
     public async Task InitializeAsync(
@@ -260,7 +303,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             ? $"Git {info.Version} detected"
             : info.Error ?? "Git status unknown.";
 
-        // Without git.exe every inspection would fail with obscure process
+        // Without git every inspection would fail with obscure process
         // errors. Still load the persisted configurations as placeholder
         // rows (Tasks 49–50): rename, remove and reorder are
         // configuration-only and stay usable without Git.
@@ -359,7 +402,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         !IsBusy && (target ?? SelectedRepository) is not null;
 
     private bool CanOpenTerminal(RepositoryRowViewModel? target) =>
-        !IsBusy && (target ?? SelectedRepository) is not null && TerminalAvailable.Value;
+        !IsBusy && (target ?? SelectedRepository) is not null && _terminalLauncher.IsAvailable;
 
     private bool CanCopyPath(RepositoryRowViewModel? target) =>
         !IsBusy && (target ?? SelectedRepository) is not null;
@@ -371,40 +414,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private bool CanCopyBranch(RepositoryRowViewModel? target) =>
         !IsBusy && !string.IsNullOrWhiteSpace(
             (target ?? SelectedRepository)?.CopyableBranch);
-
-    /// <summary>
-    /// Windows Terminal (<c>wt.exe</c>) on PATH, resolved once. When it is
-    /// missing the terminal action stays disabled instead of failing.
-    /// </summary>
-    private static readonly Lazy<bool> TerminalAvailable = new(FindTerminal);
-
-    private static bool FindTerminal()
-    {
-        const string fileName = "wt.exe";
-
-        var path = Environment.GetEnvironmentVariable("PATH");
-
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return false;
-        }
-
-        return path
-            .Split(Path.PathSeparator)
-            .Select(directory => directory.Trim().Trim('"'))
-            .Where(directory => !string.IsNullOrWhiteSpace(directory))
-            .Any(directory =>
-            {
-                try
-                {
-                    return File.Exists(Path.Combine(directory, fileName));
-                }
-                catch
-                {
-                    return false;
-                }
-            });
-    }
 
     // Remove edits only repositories.json, so it stays available without Git.
     private bool CanRemove(RepositoryRowViewModel? target) =>
@@ -505,7 +514,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     /// <summary>
     /// Cancels the running operation (Task 43). Pending repositories never
-    /// start, the running git.exe is killed where possible, completed rows
+    /// start, the running git process is killed where possible, completed rows
     /// keep their results, and all locks are released via finally blocks.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanCancel))]
@@ -943,7 +952,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Opens the selected repository folder in Explorer.
+    /// Opens the selected repository folder in the platform file manager.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanOpenFolder))]
     private void OpenFolder(RepositoryRowViewModel? target)
@@ -964,11 +973,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 return;
             }
 
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = selected.DetailsPath,
-                UseShellExecute = true
-            });
+            _folderLauncher.OpenFolder(selected.DetailsPath);
 
             StatusText = $"Opened folder for '{selected.Name}'.";
         }
@@ -979,9 +984,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     }
 
     /// <summary>
-    /// Opens Windows Terminal in the selected repository folder
-    /// (<c>wt.exe -d &lt;path&gt;</c>). Disabled when <c>wt.exe</c> is
-    /// not on PATH.
+    /// Opens a terminal in the selected repository folder. Windows prefers
+    /// Windows Terminal when available; Linux uses $TERMINAL or common
+    /// terminal launchers. Disabled when no supported terminal is available.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanOpenTerminal))]
     private void OpenTerminal(RepositoryRowViewModel? target)
@@ -996,12 +1001,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         try
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "wt.exe",
-                Arguments = $"-d \"{selected.DetailsPath}\"",
-                UseShellExecute = true
-            });
+            _terminalLauncher.OpenTerminal(selected.DetailsPath);
 
             StatusText = $"Opened terminal for '{selected.Name}'.";
         }
@@ -1015,7 +1015,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// Copies the selected repository path to the clipboard.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanCopyPath))]
-    private void CopyPath(RepositoryRowViewModel? target)
+    private async Task CopyPathAsync(RepositoryRowViewModel? target)
     {
         var selected = target ?? SelectedRepository;
 
@@ -1027,7 +1027,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         try
         {
-            Clipboard.SetText(selected.DetailsPath);
+            await _clipboard.SetTextAsync(selected.DetailsPath);
             StatusText = $"Copied path for '{selected.Name}'.";
         }
         catch (Exception ex)
@@ -1043,7 +1043,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// the repository.
     /// </summary>
     [RelayCommand(CanExecute = nameof(CanCopyBranch))]
-    private void CopyBranch(RepositoryRowViewModel? target)
+    private async Task CopyBranchAsync(RepositoryRowViewModel? target)
     {
         var selected = target ?? SelectedRepository;
 
@@ -1063,12 +1063,33 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
         try
         {
-            Clipboard.SetText(branch);
+            await _clipboard.SetTextAsync(branch);
             StatusText = $"Copied branch '{branch}'.";
         }
         catch (Exception ex)
         {
             StatusText = $"Could not copy branch for '{selected.Name}': {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Shows the keyboard-shortcut reference (F1). Pure presentation: the
+    /// dialog service owns the window lifetime so the view model stays
+    /// testable without a real desktop session.
+    /// </summary>
+    [RelayCommand]
+    private async Task ShowHelpAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _shortcutHelp.ShowAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Could not show shortcuts: {ex.Message}";
         }
     }
 
@@ -1210,7 +1231,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         IEnumerable<string> paths,
         CancellationToken cancellationToken)
     {
-        var distinct = paths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var distinct = paths.Distinct(RepositoryPathComparer.Comparer).ToList();
         var failures = new List<AddRepositoryFailure>();
         var added = 0;
         RepositoryRowViewModel? lastAdded = null;
@@ -1264,8 +1285,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        var paths = _folderPicker.PickFolders(
-            "Choose repository folders");
+        var paths = await _folderPicker.PickFoldersAsync(
+            "Choose repository folders", cancellationToken);
 
         if (paths is null || paths.Count == 0)
         {
@@ -1331,8 +1352,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        var root = _folderPicker.PickFolder(
-            "Choose a folder to search for repositories");
+        var root = await _folderPicker.PickFolderAsync(
+            "Choose a folder to search for repositories", cancellationToken);
 
         if (root is null)
         {
@@ -1356,13 +1377,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
             var alreadyTracked = Repositories
                 .Select(r => r.DetailsPath)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                .ToHashSet(RepositoryPathComparer.Comparer);
 
-            // Dialog is synchronous UI: run it on the UI thread before any
-            // further awaits so cancellation during the scan (not the dialog)
-            // is what the token governs.
-            var selected = _discoveryDialog.PickRepositoriesToAdd(
-                found, alreadyTracked);
+            // Dialog is asynchronous UI: cancellation during the scan (not
+            // the dialog) is what the linked operation token governs.
+            var selected = await _discoveryDialog.PickRepositoriesToAddAsync(
+                found, alreadyTracked, operation.Token);
 
             if (selected is null)
             {
@@ -1418,9 +1438,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        if (!_removalConfirmation.ConfirmRemoval(
+        if (!await _removalConfirmation.ConfirmRemovalAsync(
                 selected.Name,
-                selected.DetailsPath))
+                selected.DetailsPath,
+                cancellationToken))
         {
             return;
         }
@@ -1490,9 +1511,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
             return;
         }
 
-        var name = _repositoryNameDialog.RequestName(
+        var name = await _repositoryNameDialog.RequestNameAsync(
             selected.Name,
-            selected.DetailsPath);
+            selected.DetailsPath,
+            cancellationToken);
 
         if (name is null)
         {

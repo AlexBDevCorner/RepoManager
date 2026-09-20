@@ -31,7 +31,7 @@ public sealed class GitEnvironment : IGitEnvironment
             return new GitEnvironmentInfo(
                 false,
                 null,
-                "Git could not be found.\n\nInstall Git for Windows and ensure git.exe\nis available through PATH.");
+                "Git could not be found.\n\nInstall Git and ensure git\nis available on PATH.");
         }
 
         if (!result.Success)

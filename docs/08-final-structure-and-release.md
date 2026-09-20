@@ -65,15 +65,17 @@ RepoDashboard.App/
         RepositoryRowViewModel.cs
         RepositoryDetailsViewModel.cs
 
-    Views/
-        MainWindow.xaml
-        RepositoryDetailsView.xaml
+    MainWindow.axaml
+    DiscoveryDialog.axaml
+    RenameRepositoryDialog.axaml
+    KeyboardShortcutsDialog.axaml
 
     Services/
         FolderPickerService.cs
 
-    App.xaml
-    App.xaml.cs
+    App.axaml
+    App.axaml.cs
+    Program.cs
 ```
 
 ## Expected first release behaviour
