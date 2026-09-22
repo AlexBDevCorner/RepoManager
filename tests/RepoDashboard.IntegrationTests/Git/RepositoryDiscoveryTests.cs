@@ -85,7 +85,14 @@ public sealed class RepositoryDiscoveryTests : IDisposable
         MakeRepo(visible);
         var hidden = MakeDir("Hidden");
         MakeRepo(hidden);
-        File.SetAttributes(hidden, FileAttributes.Hidden);
+        // RM-006: the Windows Hidden attribute does not exist on Linux
+        // (where dot-prefix is the hidden convention, covered by .vs
+        // below), so it is only set — and only asserted — on Windows.
+        if (OperatingSystem.IsWindows())
+        {
+            File.SetAttributes(hidden, FileAttributes.Hidden);
+        }
+
         var dot = MakeDir(".vs");
         MakeRepo(dot);
 
@@ -94,7 +101,15 @@ public sealed class RepositoryDiscoveryTests : IDisposable
         var found = await sut.DiscoverAsync(_root, 3, CancellationToken.None);
 
         found.Select(r => r.Path).Should().Contain(visible);
-        found.Select(r => r.Path).Should().NotContain(hidden);
+        if (OperatingSystem.IsWindows())
+        {
+            found.Select(r => r.Path).Should().NotContain(hidden);
+        }
+        else
+        {
+            found.Select(r => r.Path).Should().Contain(hidden);
+        }
+
         found.Select(r => r.Path).Should().NotContain(dot);
     }
 

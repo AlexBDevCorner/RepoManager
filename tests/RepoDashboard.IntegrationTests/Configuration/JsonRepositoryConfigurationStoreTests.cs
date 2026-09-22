@@ -56,10 +56,13 @@ public sealed class JsonRepositoryConfigurationStoreTests
     }
 
     [Fact]
-    public async Task Save_DuplicatePathsCaseInsensitive_Throws()
+    public async Task Save_DuplicatePaths_FollowsOsCaseSensitivity()
     {
         // Arrange: same folder, different casing plus a trailing separator.
-        var store = new JsonRepositoryConfigurationStore(TemporaryFilePath());
+        // RM-004/RM-006: duplicate detection is case-insensitive on Windows
+        // but case-sensitive on Linux, where these are two distinct folders.
+        var filePath = TemporaryFilePath();
+        var store = new JsonRepositoryConfigurationStore(filePath);
 
         var repositories = new[]
         {
@@ -77,13 +80,27 @@ public sealed class JsonRepositoryConfigurationStoreTests
             }
         };
 
-        // Act
-        var act = () => store.SaveAsync(
-            repositories, CancellationToken.None);
+        if (OperatingSystem.IsWindows())
+        {
+            // Act
+            var act = () => store.SaveAsync(
+                repositories, CancellationToken.None);
 
-        // Assert
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*uplicate*");
+            // Assert
+            await act.Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage("*uplicate*");
+        }
+        else
+        {
+            // Act: distinct paths on a case-sensitive filesystem save fine.
+            await store.SaveAsync(repositories, CancellationToken.None);
+
+            // Assert: both entries round-trip.
+            var reloaded = await new JsonRepositoryConfigurationStore(filePath)
+                .LoadAsync(CancellationToken.None);
+
+            reloaded.Should().HaveCount(2);
+        }
     }
 
     [Fact]
@@ -111,7 +128,12 @@ public sealed class JsonRepositoryConfigurationStoreTests
 
         repositories[1] = repositories[1] with
         {
-            Path = repositories[0].Path.ToUpperInvariant() + Path.DirectorySeparatorChar
+            // RM-006: an exact duplicate is rejected before any write on
+            // every OS; a case-only difference is a duplicate on Windows
+            // (case-insensitive identity) but a distinct folder on Linux.
+            Path = OperatingSystem.IsWindows()
+                ? repositories[0].Path.ToUpperInvariant() + Path.DirectorySeparatorChar
+                : repositories[0].Path
         };
 
         // Act
