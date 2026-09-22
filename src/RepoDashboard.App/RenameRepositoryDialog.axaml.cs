@@ -1,6 +1,5 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
-using Avalonia.Markup.Xaml;
 
 namespace RepoDashboard.App;
 
@@ -19,6 +18,9 @@ public partial class RenameRepositoryDialog : Window
         ArgumentException.ThrowIfNullOrWhiteSpace(currentName);
         ArgumentException.ThrowIfNullOrWhiteSpace(repositoryPath);
 
+        // RM-005: binds to the generated InitializeComponent(bool) which
+        // wires x:Name fields; do not add a private parameterless overload
+        // that would shadow it and leave NameBox/PathText/SaveButton null.
         InitializeComponent();
 
         NameBox.Text = currentName;
@@ -37,11 +39,6 @@ public partial class RenameRepositoryDialog : Window
     public RenameRepositoryDialog()
     {
         InitializeComponent();
-    }
-
-    private void InitializeComponent()
-    {
-        AvaloniaXamlLoader.Load(this);
     }
 
     private void UpdateSaveEnabled() =>

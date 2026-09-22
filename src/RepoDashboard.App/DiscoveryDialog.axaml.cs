@@ -1,6 +1,5 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
-using Avalonia.Markup.Xaml;
 using RepoDashboard.App.ViewModels;
 
 namespace RepoDashboard.App;
@@ -29,19 +28,29 @@ public partial class DiscoveryDialog : Window
                     ?? viewModel.Options.FirstOrDefault();
             }
 
-            RepositoryList.Focus();
+            // RM-005: same namescope wiring as MainWindow. The generated
+            // InitializeComponent assigns RepositoryList; fall back to an
+            // explicit lookup and fail fast if the grid is miswired
+            // instead of throwing NullReferenceException.
+            var list = RepositoryList
+                ?? this.FindControl<ListBox>("RepositoryList")
+                ?? throw new InvalidOperationException(
+                    "DiscoveryDialog.RepositoryList could not be resolved "
+                    + "after XAML initialization. Ensure "
+                    + "DiscoveryDialog.axaml defines "
+                    + "<ListBox x:Name=\"RepositoryList\" ...>.");
+
+            list.Focus();
         };
     }
 
     // Parameterless constructor for Avalonia XAML previewer.
+    // RM-005: binds to the generated InitializeComponent(bool) which
+    // wires x:Name fields; do not add a private parameterless overload
+    // that would shadow it and leave RepositoryList null.
     public DiscoveryDialog()
     {
         InitializeComponent();
-    }
-
-    private void InitializeComponent()
-    {
-        AvaloniaXamlLoader.Load(this);
     }
 
     private void AddSelected_Click(object? sender, RoutedEventArgs e)
