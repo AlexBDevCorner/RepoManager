@@ -25,7 +25,7 @@ namespace RepoDashboard.App.Tests;
 /// These tests exercise actual Avalonia control initialization via the
 /// headless platform and fail against the broken implementation (null field)
 /// while passing after the fix.
-/// </summary>
+[Collection("Headless")]
 public sealed class MainWindowStartupTests : IDisposable
 {
     private readonly HeadlessUnitTestSession _session;
