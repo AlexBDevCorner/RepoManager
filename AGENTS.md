@@ -145,7 +145,6 @@ dotnet run --project src/RepoDashboard.App
 
 ## Must not modify
 
-- `.github/` — autonomy wiring and CI. Propose changes in the PR body instead.
 - `control/` — read-only control-repo checkout (task spec).
 - Target frameworks or package versions unless the task requires it (justify
   in the PR if so).
