@@ -30,9 +30,11 @@ public partial class DiscoveryDialog : Window
 
             // RM-005: same namescope wiring as MainWindow. The generated
             // InitializeComponent assigns RepositoryList; fall back to an
-            // explicit lookup and fail fast if the grid is miswired
-            // instead of throwing NullReferenceException.
-            var list = RepositoryList
+            // explicit lookup and fail fast if the list is miswired
+            // instead of throwing NullReferenceException. Store back to
+            // the field so the explicit RepositoryList.Focus() contract
+            // below stays valid.
+            RepositoryList = RepositoryList
                 ?? this.FindControl<ListBox>("RepositoryList")
                 ?? throw new InvalidOperationException(
                     "DiscoveryDialog.RepositoryList could not be resolved "
@@ -40,7 +42,7 @@ public partial class DiscoveryDialog : Window
                     + "DiscoveryDialog.axaml defines "
                     + "<ListBox x:Name=\"RepositoryList\" ...>.");
 
-            list.Focus();
+            RepositoryList.Focus();
         };
     }
 
