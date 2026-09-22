@@ -119,8 +119,8 @@ jobs:
         # automatically. Same action pin as the control-repo dispatcher.
         # Requires vars.AUTONOMOUS_APP_CLIENT_ID plus
         # secrets.AUTONOMOUS_APP_PRIVATE_KEY in this repository, and the App
-        # installation on RepoManager must grant Contents, Pull requests, and
-        # Issues write.
+        # installation on RepoManager must grant Contents, Pull requests,
+        # Issues, and Workflows write.
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.AUTONOMOUS_APP_CLIENT_ID }}
@@ -130,6 +130,7 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
           permission-issues: write
+          permission-workflows: write
       - name: Verify worker GitHub authentication
         shell: pwsh
         env:
@@ -225,5 +226,5 @@ jobs:
             Record real commands and results. Add tests for behavior changes.
             Open or update the same PR to master, titled [${{ inputs.task_id }}] <description>.
             Include a concise implementation summary and the real build/test results in the PR body.
-            Never merge, force-push, modify .github/, or commit secrets.
+            Never merge, force-push, or commit secrets.
             Use PowerShell for Windows environment variables.
