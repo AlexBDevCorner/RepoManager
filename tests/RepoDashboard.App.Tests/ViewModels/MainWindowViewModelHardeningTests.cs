@@ -301,16 +301,28 @@ public sealed class MainWindowViewModelHardeningTests
     }
 
     private static DiscoveredRepository Discovered(string name) =>
-        new() { Path = $"""C:\Source\Repos\{name}""", Name = name };
+        new() { Path = RepoPath(name), Name = name };
+
+    /// <summary>
+    /// RM-006: fixture root with an OS-native separator. On Windows this is
+    /// byte-identical to the historical RepoRoot fixtures; on Linux
+    /// (where backslash is a valid filename character, not a separator)
+    /// fixtures must use forward slashes so OS path APIs derive display
+    /// names the way they do for real repository paths.
+    /// </summary>
+    private static string RepoRoot =>
+        OperatingSystem.IsWindows() ? @"C:\Source\Repos" : "/source/repos";
+
+    private static string RepoPath(string name) => Path.Combine(RepoRoot, name);
 
     [Fact]
     public async Task Discover_adds_selected_repositories()
     {
         var dashboard = new FakeDashboard();
         var sut = new MainWindowViewModel(
-            new FakeGitEnvironment(), dashboard, new FixedPicker(@"C:\Source\Repos"),
+            new FakeGitEnvironment(), dashboard, new FixedPicker(RepoRoot),
             new FakeDiscovery([Discovered("Store"), Discovered("Viewer")]),
-            new FakeDialog([@"C:\Source\Repos\Store"]));
+            new FakeDialog([RepoPath("Store")]));
         await sut.InitializeAsync();
 
         await sut.DiscoverCommand.ExecuteAsync(null);
@@ -326,7 +338,7 @@ public sealed class MainWindowViewModelHardeningTests
     {
         var dashboard = new FakeDashboard();
         var sut = new MainWindowViewModel(
-            new FakeGitEnvironment(), dashboard, new FixedPicker(@"C:\Source\Repos"),
+            new FakeGitEnvironment(), dashboard, new FixedPicker(RepoRoot),
             new FakeDiscovery([]),
             new FakeDialog([]));
         await sut.InitializeAsync();
@@ -343,7 +355,7 @@ public sealed class MainWindowViewModelHardeningTests
     {
         var dashboard = new FakeDashboard();
         var sut = new MainWindowViewModel(
-            new FakeGitEnvironment(), dashboard, new FixedPicker(@"C:\Source\Repos"),
+            new FakeGitEnvironment(), dashboard, new FixedPicker(RepoRoot),
             new FakeDiscovery([Discovered("Store")]),
             new FakeDialog(null));
         await sut.InitializeAsync();
@@ -361,7 +373,7 @@ public sealed class MainWindowViewModelHardeningTests
         var sut = new MainWindowViewModel(
             new FakeGitEnvironment(), dashboard, new CancelledPicker(),
             new FakeDiscovery([Discovered("Store")]),
-            new FakeDialog([@"C:\Source\Repos\Store"]));
+            new FakeDialog([RepoPath("Store")]));
         await sut.InitializeAsync();
 
         await sut.DiscoverCommand.ExecuteAsync(null);
@@ -376,7 +388,7 @@ public sealed class MainWindowViewModelHardeningTests
         var dashboard = new FakeDashboard();
         var discovery = new BlockingDiscovery();
         var sut = new MainWindowViewModel(
-            new FakeGitEnvironment(), dashboard, new FixedPicker(@"C:\Source\Repos"),
+            new FakeGitEnvironment(), dashboard, new FixedPicker(RepoRoot),
             discovery, new UnreachableDialog());
         await sut.InitializeAsync();
 
@@ -460,8 +472,8 @@ public sealed class MainWindowViewModelHardeningTests
     [Fact]
     public async Task FetchAll_cancelled_batch_keeps_completed_row_resets_pending()
     {
-        var done = FakeDashboard.ItemFor(@"C:\Source\Repos\Done");
-        var pending = FakeDashboard.ItemFor(@"C:\Source\Repos\Pending");
+        var done = FakeDashboard.ItemFor(RepoPath("Done"));
+        var pending = FakeDashboard.ItemFor(RepoPath("Pending"));
         var dashboard = new PartialBatchDashboard(done);
         var sut = new MainWindowViewModel(
             new FakeGitEnvironment(), dashboard, new CancelledPicker());
@@ -507,9 +519,9 @@ public sealed class MainWindowViewModelHardeningTests
         var dashboard = new FakeDashboard();
         var sut = new MainWindowViewModel(
             new FakeGitEnvironment(available: false), dashboard,
-            new FixedPicker(@"C:\Source\Repos"),
+            new FixedPicker(RepoRoot),
             new FakeDiscovery([Discovered("Store")]),
-            new FakeDialog([@"C:\Source\Repos\Store"]));
+            new FakeDialog([RepoPath("Store")]));
         await sut.InitializeAsync();
 
         sut.DiscoverCommand.CanExecute(null).Should().BeFalse();
@@ -561,7 +573,7 @@ public sealed class MainWindowViewModelHardeningTests
         {
             Id = Guid.NewGuid(),
             Name = "Store",
-            Path = @"C:\Source\Repos\Store"
+            Path = RepoPath("Store")
         };
 
         const string raw = "fatal: Not possible to fast-forward to 'abc123'.";
@@ -594,9 +606,9 @@ public sealed class MainWindowViewModelHardeningTests
             new FakeGitEnvironment(), dashboard,
             new FixedMultiPicker(
             [
-                @"C:\Source\Repos\RepoA",
-                @"C:\Source\Repos\RepoB",
-                @"C:\Source\Repos\RepoC"
+                RepoPath("RepoA"),
+                RepoPath("RepoB"),
+                RepoPath("RepoC")
             ]));
         await sut.InitializeAsync();
 
@@ -616,7 +628,7 @@ public sealed class MainWindowViewModelHardeningTests
         var dashboard = new FakeDashboard();
         var sut = new MainWindowViewModel(
             new FakeGitEnvironment(), dashboard,
-            new FixedMultiPicker([@"C:\Source\Repos\RepoManager"]));
+            new FixedMultiPicker([RepoPath("RepoManager")]));
         await sut.InitializeAsync();
 
         await sut.AddCommand.ExecuteAsync(null);
@@ -664,16 +676,16 @@ public sealed class MainWindowViewModelHardeningTests
         {
             AddFailureFor = path => path.EndsWith("RepoB")
                 ? new InvalidOperationException(
-                    "'C:\\Source\\Repos\\RepoB' is already on the dashboard as 'RepoB'.")
+                    $"'{RepoPath("RepoB")}' is already on the dashboard as 'RepoB'.")
                 : null
         };
         var sut = new MainWindowViewModel(
             new FakeGitEnvironment(), dashboard,
             new FixedMultiPicker(
             [
-                @"C:\Source\Repos\RepoA",
-                @"C:\Source\Repos\RepoB",
-                @"C:\Source\Repos\RepoC"
+                RepoPath("RepoA"),
+                RepoPath("RepoB"),
+                RepoPath("RepoC")
             ]));
         await sut.InitializeAsync();
 
@@ -695,8 +707,8 @@ public sealed class MainWindowViewModelHardeningTests
             new FakeGitEnvironment(), dashboard,
             new FixedMultiPicker(
             [
-                @"C:\Source\Repos\RepoA",
-                @"C:\Source\Repos\RepoA"
+                RepoPath("RepoA"),
+                RepoPath("RepoA")
             ]));
         await sut.InitializeAsync();
 
@@ -715,9 +727,9 @@ public sealed class MainWindowViewModelHardeningTests
             new FakeGitEnvironment(), dashboard,
             new FixedMultiPicker(
             [
-                @"C:\Source\Repos\RepoA",
-                @"C:\Source\Repos\RepoB",
-                @"C:\Source\Repos\RepoC"
+                RepoPath("RepoA"),
+                RepoPath("RepoB"),
+                RepoPath("RepoC")
             ]));
         await sut.InitializeAsync();
         dashboard.OnAdd = call =>
@@ -745,9 +757,9 @@ public sealed class MainWindowViewModelHardeningTests
         var dashboard = new FakeDashboard();
         var sut = new MainWindowViewModel(
             new FakeGitEnvironment(), dashboard,
-            new DiscoverRootPicker(@"C:\Source\Repos"),
+            new DiscoverRootPicker(RepoRoot),
             new FakeDiscovery([Discovered("Store")]),
-            new FakeDialog([@"C:\Source\Repos\Store"]));
+            new FakeDialog([RepoPath("Store")]));
         await sut.InitializeAsync();
 
         await sut.DiscoverCommand.ExecuteAsync(null);
@@ -764,7 +776,7 @@ public sealed class MainWindowViewModelHardeningTests
         var sut = new MainWindowViewModel(
             new FakeGitEnvironment(), dashboard,
             new FixedMultiPicker(
-                names.Select(n => $"""C:\Source\Repos\{n}""").ToList()));
+                names.Select(RepoPath).ToList()));
         await sut.InitializeAsync();
         await sut.AddCommand.ExecuteAsync(null);
         return sut;

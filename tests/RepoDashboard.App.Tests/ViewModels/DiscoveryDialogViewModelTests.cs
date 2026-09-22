@@ -50,11 +50,13 @@ public sealed class DiscoveryDialogViewModelTests
     {
         // RM-004: trailing separators are always ignored; case sensitivity
         // follows the OS (insensitive on Windows, sensitive on Linux).
+        // RM-006: the trailing separator must be the OS-native one —
+        // backslash is a filename character, not a separator, on Linux.
         var trailingSeparator = new DiscoveryDialogViewModel(
             [Repo("Store")],
             new HashSet<string>(RepositoryPathComparer.Comparer)
             {
-                """C:\Source\Repos\Store\"""
+                $"""C:\Source\Repos\Store{Path.DirectorySeparatorChar}"""
             });
 
         trailingSeparator.Options.Single().IsAlreadyTracked.Should().BeTrue();

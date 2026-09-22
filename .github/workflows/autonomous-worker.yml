@@ -56,7 +56,7 @@ permissions:
 jobs:
   worker:
     if: github.ref == 'refs/heads/master'
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 135
     env:
       GH_REPO: ${{ github.repository }}
@@ -68,18 +68,19 @@ jobs:
       EXPECTED_HEAD: ${{ inputs.expected_head }}
     steps:
       - name: Validate dispatch inputs before checkout
-        shell: pwsh
+        shell: bash
         env:
           CONTROL_REPO: ${{ inputs.control_repo }}
           CONTROL_COMMIT: ${{ inputs.control_commit }}
         run: |
-          if ($env:CONTROL_REPO -cne 'AlexBDevCorner/AutonomousWork') { throw 'Unapproved control repository' }
-          if ($env:TASK_ID -cnotmatch '^RM-[0-9]+$') { throw 'Invalid task ID' }
-          if ($env:TASK_PATH -cne "projects/repomanager/tasks/$env:TASK_ID.md") { throw 'Invalid task path' }
-          if ($env:CONTROL_COMMIT -and $env:CONTROL_COMMIT -cnotmatch '^[a-f0-9]{40}$') { throw 'Expected full control SHA' }
-          if ($env:ATTEMPT_ID -and ($env:ATTEMPT_ID -cnotmatch '^[a-f0-9-]{36}$' -or !$env:CONTROL_COMMIT)) { throw 'Invalid claim' }
-          if ($env:WORK_MODE -notin @('implementation', 'correction')) { throw 'Invalid mode' }
-          if ($env:WORK_MODE -eq 'correction' -and (!$env:ATTEMPT_ID -or $env:REVIEW_ID -notmatch '^[0-9]+$' -or $env:EXPECTED_HEAD -cnotmatch '^[a-f0-9]{40}$')) { throw 'Invalid review claim' }
+          set -euo pipefail
+          if [[ "${CONTROL_REPO:-}" != 'AlexBDevCorner/AutonomousWork' ]]; then echo 'Unapproved control repository' >&2; exit 1; fi
+          if [[ ! "${TASK_ID:-}" =~ ^RM-[0-9]+$ ]]; then echo 'Invalid task ID' >&2; exit 1; fi
+          if [[ "${TASK_PATH:-}" != "projects/repomanager/tasks/${TASK_ID}.md" ]]; then echo 'Invalid task path' >&2; exit 1; fi
+          if [[ -n "${CONTROL_COMMIT:-}" && ! "${CONTROL_COMMIT}" =~ ^[a-f0-9]{40}$ ]]; then echo 'Expected full control SHA' >&2; exit 1; fi
+          if [[ -n "${ATTEMPT_ID:-}" && ( ! "${ATTEMPT_ID}" =~ ^[a-f0-9-]{36}$ || -z "${CONTROL_COMMIT:-}" ) ]]; then echo 'Invalid claim' >&2; exit 1; fi
+          if [[ "${WORK_MODE:-}" != 'implementation' && "${WORK_MODE:-}" != 'correction' ]]; then echo 'Invalid mode' >&2; exit 1; fi
+          if [[ "${WORK_MODE:-}" == 'correction' && ( -z "${ATTEMPT_ID:-}" || ! "${REVIEW_ID:-}" =~ ^[0-9]+$ || ! "${EXPECTED_HEAD:-}" =~ ^[a-f0-9]{40}$ ) ]]; then echo 'Invalid review claim' >&2; exit 1; fi
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -100,12 +101,12 @@ jobs:
         with:
           node-version: '22'
       - name: Build validator and record pin
-        shell: pwsh
+        shell: bash
         run: |
+          set -euo pipefail
           dotnet build control/tools/AutonomousWork.Cli -c Release --nologo
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $controlSha = git -C control rev-parse HEAD
-          "CONTROL_SHA=$controlSha" >> $env:GITHUB_ENV
+          controlSha="$(git -C control rev-parse HEAD)"
+          echo "CONTROL_SHA=${controlSha}" >> "${GITHUB_ENV}"
       - name: Verify authorization and bounded execution
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -132,32 +133,26 @@ jobs:
           permission-issues: write
           permission-workflows: write
       - name: Verify worker GitHub authentication
-        shell: pwsh
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.worker-token.outputs.token }}
         run: |
-          $repo = gh api "repos/$env:GH_REPO" --jq '.full_name'
-
-          if ($LASTEXITCODE -ne 0) {
-            throw 'GitHub CLI authentication failed'
-          }
-
-          if ($repo -cne $env:GH_REPO) {
-            throw "GitHub CLI authenticated against unexpected repository: $repo"
-          }
+          set -euo pipefail
+          repo="$(gh api "repos/${GH_REPO}" --jq '.full_name')" || { echo 'GitHub CLI authentication failed' >&2; exit 1; }
+          if [[ "${repo}" != "${GH_REPO}" ]]; then echo "GitHub CLI authenticated against unexpected repository: ${repo}" >&2; exit 1; fi
       - name: Wire App token into git
-        shell: pwsh
+        shell: bash
         env:
           GH_TOKEN: ${{ steps.worker-token.outputs.token }}
         run: |
+          set -euo pipefail
           # use_github_token mode skips OpenCode's own git credential setup, and
           # the checkouts use persist-credentials: false, so plain `git push`
           # would otherwise be unauthenticated. Configure gh as the git
           # credential helper deterministically here instead of leaving it to
           # the model. No raw token is persisted: git invokes
           # `gh auth git-credential` on demand, which reads GH_TOKEN at runtime.
-          gh auth setup-git --hostname github.com --force
-          if ($LASTEXITCODE -ne 0) { throw 'gh auth setup-git failed' }
+          gh auth setup-git --hostname github.com --force || { echo 'gh auth setup-git failed' >&2; exit 1; }
       # The worker implements the task. Normal pull-request CI and review are the quality gates.
       - name: Run OpenCode worker
         timeout-minutes: 120
@@ -172,7 +167,7 @@ jobs:
           GH_TOKEN: ${{ steps.worker-token.outputs.token }}
           # Fail closed by default: unmatched external_directory would otherwise
           # fall back to OpenCode's interactive `ask`, which hangs an
-          # unattended worker (e.g. synthetic `C:\*` + `_temp` checks combine
+          # unattended worker (e.g. synthetic runner-temp checks combine
           # into one approval). `*` deny comes first; OpenCode uses the last
           # matching rule, so the narrow Temp allows below still win.
           # Edits under temp stay denied, as does shell redirection of runner
@@ -227,4 +222,7 @@ jobs:
             Open or update the same PR to master, titled [${{ inputs.task_id }}] <description>.
             Include a concise implementation summary and the real build/test results in the PR body.
             Never merge, force-push, or commit secrets.
-            Use PowerShell for Windows environment variables.
+            You are running on an Ubuntu (Linux) GitHub-hosted runner.
+            Use bash/POSIX shell syntax and Linux-style environment variables
+            (e.g. "$VAR", "${GITHUB_ENV}"); do not use Windows-only paths,
+            executables, or PowerShell-only syntax.

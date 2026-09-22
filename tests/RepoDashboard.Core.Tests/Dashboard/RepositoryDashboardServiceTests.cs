@@ -375,8 +375,11 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task AddAsync_DuplicatePathCaseInsensitive_ThrowsAndPersistsNothing()
+    public async Task AddAsync_DuplicatePath_FollowsOsCaseSensitivity()
     {
+        // RM-004/RM-006: duplicate detection follows OS path semantics —
+        // case-insensitive on Windows, case-sensitive on Linux. The seed
+        // entry differs from the added directory only by casing.
         var directory = CreateTempDirectory();
         var existing = Config(
             "Store",
@@ -384,13 +387,25 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
         var store = new InMemoryStore([existing]);
         var sut = CreateSut(store, new StubInspector(UpToDateSnapshot));
 
-        var act = () => sut.AddAsync(directory, CancellationToken.None);
+        if (OperatingSystem.IsWindows())
+        {
+            var act = () => sut.AddAsync(directory, CancellationToken.None);
 
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .WithMessage("*already on the dashboard*");
-        (await store.LoadAsync(CancellationToken.None))
-            .Should().ContainSingle();
-        store.SaveCalls.Should().Be(0);
+            await act.Should().ThrowAsync<InvalidOperationException>()
+                .WithMessage("*already on the dashboard*");
+            (await store.LoadAsync(CancellationToken.None))
+                .Should().ContainSingle();
+            store.SaveCalls.Should().Be(0);
+        }
+        else
+        {
+            var item = await sut.AddAsync(directory, CancellationToken.None);
+
+            item.Configuration.Path.Should().Be(directory);
+            (await store.LoadAsync(CancellationToken.None))
+                .Should().HaveCount(2);
+            store.SaveCalls.Should().Be(1);
+        }
     }
 
     [Fact]
