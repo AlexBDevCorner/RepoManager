@@ -1,5 +1,4 @@
 using Avalonia.Controls;
-using Avalonia.Markup.Xaml;
 
 namespace RepoDashboard.App;
 
@@ -13,11 +12,9 @@ public partial class KeyboardShortcutsDialog : Window
 {
     public KeyboardShortcutsDialog()
     {
+        // RM-005: binds to the generated InitializeComponent(bool). Do not
+        // add a private parameterless overload that would shadow the
+        // generated namescope wiring on windows with x:Name controls.
         InitializeComponent();
-    }
-
-    private void InitializeComponent()
-    {
-        AvaloniaXamlLoader.Load(this);
     }
 }
