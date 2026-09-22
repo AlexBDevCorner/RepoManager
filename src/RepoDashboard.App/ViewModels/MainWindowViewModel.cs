@@ -1271,6 +1271,54 @@ public sealed partial class MainWindowViewModel : ObservableObject
             added, distinct.Count, failures, lastAdded);
     }
 
+    /// <summary>
+    /// Concise per-failure reasons for a multi-add batch (RM-007).
+    /// Reuses the <see cref="AddRepositoryFailure"/> messages already
+    /// collected by <c>AddRepositoriesAsync</c> — no re-validation.
+    /// Limited to the first few reasons so the status stays readable;
+    /// callers keep the aggregate prefix so counts remain visible.
+    /// </summary>
+    private static string BuildFailureDetails(
+        IReadOnlyList<AddRepositoryFailure> failures,
+        int maxShown = 3)
+    {
+        var shown = failures
+            .Take(maxShown)
+            .Select(f => f.Message?.Trim())
+            .Where(m => !string.IsNullOrWhiteSpace(m))
+            .Select(m => m!)
+            .ToList();
+
+        if (shown.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var details = string.Join(" ", shown);
+
+        if (failures.Count > shown.Count)
+        {
+            details += $" (+{failures.Count - shown.Count} more)";
+        }
+
+        return details;
+    }
+
+    private static string BuildMultiAddStatus(AddRepositoriesSummary result)
+    {
+        var prefix = $"Added {result.Added} of {result.Attempted} repositories. " +
+                     $"{result.Failures.Count} could not be added.";
+        var details = BuildFailureDetails(result.Failures);
+        return string.IsNullOrEmpty(details) ? prefix : $"{prefix} {details}";
+    }
+
+    private static string BuildDiscoveryAddStatus(AddRepositoriesSummary result)
+    {
+        var prefix = $"Added {result.Added} repositories, {result.Failures.Count} failed.";
+        var details = BuildFailureDetails(result.Failures);
+        return string.IsNullOrEmpty(details) ? prefix : $"{prefix} {details}";
+    }
+
     [RelayCommand(CanExecute = nameof(CanAdd))]
     private async Task AddAsync(
         CancellationToken cancellationToken)
@@ -1315,8 +1363,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             }
             else
             {
-                StatusText = $"Added {result.Added} of {result.Attempted} repositories. " +
-                             $"{result.Failures.Count} could not be added.";
+                StatusText = BuildMultiAddStatus(result);
             }
 
             NotifyOrderingCommands();
@@ -1401,7 +1448,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
             StatusText = result.Failures.Count == 0
                 ? $"Added {result.Added} repositories."
-                : $"Added {result.Added} repositories, {result.Failures.Count} failed.";
+                : BuildDiscoveryAddStatus(result);
 
             NotifyOrderingCommands();
         }

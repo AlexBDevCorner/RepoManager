@@ -694,8 +694,72 @@ public sealed class MainWindowViewModelHardeningTests
         dashboard.AddCalls.Should().Be(3);
         sut.Repositories.Select(r => r.Name)
             .Should().Equal("RepoA", "RepoC");
-        sut.StatusText.Should().Be(
+        // RM-007: partial failures keep the aggregate counts but must also
+        // surface the actionable reason instead of only "1 could not be added".
+        sut.StatusText.Should().StartWith(
             "Added 2 of 3 repositories. 1 could not be added.");
+        sut.StatusText.Should().Contain("already on the dashboard");
+        sut.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Add_all_failures_surface_reasons_instead_of_only_aggregate()
+    {
+        var dashboard = new FakeDashboard
+        {
+            AddFailureFor = path => path.EndsWith("RepoB")
+                ? new InvalidOperationException(
+                    $"'{RepoPath("RepoB")}' is already on the dashboard as 'RepoB'.")
+                : new InvalidOperationException(
+                    $"Directory is not a Git repository: '{path}'.")
+        };
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard,
+            new FixedMultiPicker(
+            [
+                RepoPath("RepoA"),
+                RepoPath("RepoB")
+            ]));
+        await sut.InitializeAsync();
+
+        await sut.AddCommand.ExecuteAsync(null);
+
+        dashboard.AddCalls.Should().Be(2);
+        sut.Repositories.Should().BeEmpty();
+        // RM-007: all-failed multi-add must not collapse to only
+        // "Added 0 of 2 repositories. 2 could not be added."
+        sut.StatusText.Should().StartWith(
+            "Added 0 of 2 repositories. 2 could not be added.");
+        sut.StatusText.Should().Contain("already on the dashboard");
+        sut.StatusText.Should().Contain("not a Git repository");
+        sut.IsBusy.Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task Discover_partial_failure_surfaces_reasons()
+    {
+        var dashboard = new FakeDashboard
+        {
+            AddFailureFor = path => path.EndsWith("Viewer")
+                ? new InvalidOperationException(
+                    $"'{RepoPath("Viewer")}' is already on the dashboard as 'Viewer'.")
+                : null
+        };
+        var sut = new MainWindowViewModel(
+            new FakeGitEnvironment(), dashboard, new FixedPicker(RepoRoot),
+            new FakeDiscovery([Discovered("Store"), Discovered("Viewer")]),
+            new FakeDialog([RepoPath("Store"), RepoPath("Viewer")]));
+        await sut.InitializeAsync();
+
+        await sut.DiscoverCommand.ExecuteAsync(null);
+
+        dashboard.AddCalls.Should().Be(2);
+        sut.Repositories.Select(r => r.Name)
+            .Should().Equal("Store");
+        // RM-007: discovery multi-add must reuse the collected failure
+        // reasons rather than reporting only "1 failed".
+        sut.StatusText.Should().Contain("1 failed");
+        sut.StatusText.Should().Contain("already on the dashboard");
         sut.IsBusy.Should().BeFalse();
     }
 
