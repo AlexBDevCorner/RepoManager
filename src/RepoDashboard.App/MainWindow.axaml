@@ -223,6 +223,7 @@
     </Border>
 
     <DataGrid x:Name="RepositoryGrid"
+              DoubleTapped="OnRepositoryGridDoubleTapped"
               ItemsSource="{Binding Repositories}"
               SelectedItem="{Binding SelectedRepository, Mode=TwoWay}"
               AutoGenerateColumns="False"
