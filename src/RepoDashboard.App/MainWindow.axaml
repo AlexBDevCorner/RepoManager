@@ -1,7 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="RepoDashboard.App.MainWindow"
-        Title="Repo Dashboard" Width="1000" Height="600">
+        Title="{Binding WindowTitle, FallbackValue=RepoManager}" Width="1000" Height="600">
   <Window.KeyBindings>
     <!-- Repository management -->
     <KeyBinding Gesture="Ctrl+N" Command="{Binding AddCommand}" />

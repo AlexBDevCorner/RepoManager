@@ -119,6 +119,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
     [ObservableProperty]
     private string _statusText = string.Empty;
 
+    /// <summary>
+    /// RM-008: main window title including the running application version
+    /// (for example <c>RepoManager — 1.2.3</c>). Resolved once from assembly
+    /// metadata via <see cref="AppVersion"/>; an explicit value may be
+    /// injected for tests.
+    /// </summary>
+    public string WindowTitle { get; }
+
     public MainWindowViewModel(
         IGitEnvironment gitEnvironment,
         IRepositoryDashboardService dashboard,
@@ -131,7 +139,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         IClipboardService? clipboard = null,
         IFolderLauncher? folderLauncher = null,
         ITerminalLauncher? terminalLauncher = null,
-        IKeyboardShortcutsDialogService? shortcutHelp = null)
+        IKeyboardShortcutsDialogService? shortcutHelp = null,
+        string? windowTitle = null)
     {
         ArgumentNullException.ThrowIfNull(gitEnvironment);
         ArgumentNullException.ThrowIfNull(dashboard);
@@ -148,6 +157,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _folderLauncher = folderLauncher ?? new StubFolderLauncher();
         _terminalLauncher = terminalLauncher ?? new StubTerminalLauncher();
         _shortcutHelp = shortcutHelp ?? new StubShortcutHelpService();
+        WindowTitle = windowTitle ?? AppVersion.GetWindowTitle();
     }
 
     /// <summary>
