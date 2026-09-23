@@ -199,7 +199,7 @@ public sealed class RepositoryUpdateCancellationTests
             IReadOnlyList<string> arguments,
             CancellationToken cancellationToken = default)
         {
-            if (arguments.Count > 0 && arguments[0] == "pull")
+            if (arguments.Count > 0 && string.Equals(arguments[0], "pull", StringComparison.Ordinal))
             {
                 Interlocked.Exchange(ref _pullStarted, 1);
                 PullToken = cancellationToken;

@@ -1,0 +1,52 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+tab_width = 4
+
+[*.{axaml,xaml}]
+indent_size = 2
+tab_width = 2
+
+[*.{cs,csx}]
+indent_size = 4
+tab_width = 4
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+
+# Conservative C# style: suggest rather than enforce subjective choices.
+# The build enforces compiler + analyzer warnings as errors; formatting
+# itself is verified with `dotnet format --verify-no-changes`.
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = true:suggestion
+csharp_style_expression_bodied_methods = false:suggestion
+csharp_style_expression_bodied_constructors = false:suggestion
+csharp_style_expression_bodied_operators = false:suggestion
+csharp_prefer_braces = true:suggestion
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+dotnet_style_qualification_for_method = false:suggestion
+dotnet_style_qualification_for_event = false:suggestion
+
+# RM-011: Meziantou configuration. Keep enforcement practical:
+# do not refactor unrelated code merely to satisfy low-value advice.
+# MA0004 (ConfigureAwait): noisy across library + Avalonia UI code where the
+#   synchronization context is intentional; bulk-adding ConfigureAwait(false)
+#   would be a broad unrelated refactor, so keep it visible but non-failing.
+dotnet_diagnostic.MA0004.severity = suggestion
+# MA0051 (method too long): subjective size limit; splitting existing
+#   dashboard/Git orchestration methods would be unrelated refactoring.
+dotnet_diagnostic.MA0051.severity = suggestion
+# MA0049 (type name matches namespace): unsuitable for the Avalonia
+#   composition root, where `App` in `RepoDashboard.App` is required by
+#   App.axaml/XAML conventions; renaming would be unrelated refactoring.
+dotnet_diagnostic.MA0049.severity = suggestion
+# MA0025 (throw NotImplementedException): test doubles intentionally throw for
+#   unexercised interface members; converting 60+ stubs would be unrelated churn.
+dotnet_diagnostic.MA0025.severity = suggestion

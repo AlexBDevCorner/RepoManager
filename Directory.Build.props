@@ -1,0 +1,38 @@
+<Project>
+  <!-- RM-011: deterministic repository-wide .NET quality foundation.
+       Centralizes common project settings so individual .csproj files
+       only carry project-specific properties (OutputType, IsPackable,
+       Avalonia settings, test configuration).
+       The build itself is the source of truth for analyzer policy;
+       see Directory.Packages.props for centrally pinned versions. -->
+
+  <!-- The autonomous worker nests a read-only control/ checkout inside the
+       target repo. Normal clones and CI never have control/, so this guard is
+       a no-op there. It keeps root guardrails from altering control tool builds
+       (net8.0, own package versions, no lock files) when they happen to be
+       evaluated under this root. -->
+  <PropertyGroup>
+    <_IsControlProject Condition="$([System.String]::Copy('$(MSBuildProjectFullPath)').Replace('\', '/').Contains('/control/'))">true</_IsControlProject>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(_IsControlProject)' != 'true'">
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <!-- Pinned numeric baseline so SDK updates cannot silently change rules. -->
+    <AnalysisLevel>10.0</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- Deterministic CI builds only when running in GitHub Actions. -->
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    <!-- Deterministic dependency graph: every project produces packages.lock.json. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+  </PropertyGroup>
+
+  <!-- Conservative general-purpose analyzer for all RepoManager code.
+       Development-only: PrivateAssets=all prevents runtime/transitive flow. -->
+  <ItemGroup Condition="'$(_IsControlProject)' != 'true'">
+    <PackageReference Include="Meziantou.Analyzer" PrivateAssets="all" />
+  </ItemGroup>
+</Project>

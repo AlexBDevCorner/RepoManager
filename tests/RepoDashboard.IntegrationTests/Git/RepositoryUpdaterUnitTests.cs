@@ -131,7 +131,7 @@ public sealed class RepositoryUpdaterUnitTests
     }
 
     private static bool StartsWith(IReadOnlyList<string> arguments, string command) =>
-        arguments.Count > 0 && arguments[0] == command;
+        arguments.Count > 0 && string.Equals(arguments[0], command, StringComparison.Ordinal);
 
     private static bool IsForbiddenMutation(IReadOnlyList<string> arguments) =>
         StartsWith(arguments, "merge")

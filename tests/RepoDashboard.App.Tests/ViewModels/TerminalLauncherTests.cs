@@ -16,7 +16,7 @@ public sealed class TerminalLauncherTests
     {
         var sut = new TerminalLauncher(
             terminalEnvironment: () => null,
-            executableExists: name => name == "wt.exe",
+            executableExists: name => string.Equals(name, "wt.exe", StringComparison.Ordinal),
             isWindows: () => true);
 
         sut.IsAvailable.Should().BeTrue();
@@ -38,7 +38,7 @@ public sealed class TerminalLauncherTests
     {
         var sut = new TerminalLauncher(
             terminalEnvironment: () => "myterm",
-            executableExists: name => name == "myterm",
+            executableExists: name => string.Equals(name, "myterm", StringComparison.Ordinal),
             isWindows: () => false);
 
         sut.IsAvailable.Should().BeTrue();
@@ -49,7 +49,7 @@ public sealed class TerminalLauncherTests
     {
         var sut = new TerminalLauncher(
             terminalEnvironment: () => null,
-            executableExists: name => name == "gnome-terminal",
+            executableExists: name => string.Equals(name, "gnome-terminal", StringComparison.Ordinal),
             isWindows: () => false);
 
         sut.IsAvailable.Should().BeTrue();
@@ -71,7 +71,7 @@ public sealed class TerminalLauncherTests
     {
         var sut = new TerminalLauncher(
             terminalEnvironment: () => "missing-term",
-            executableExists: name => name == "xterm",
+            executableExists: name => string.Equals(name, "xterm", StringComparison.Ordinal),
             isWindows: () => false);
 
         sut.IsAvailable.Should().BeTrue();

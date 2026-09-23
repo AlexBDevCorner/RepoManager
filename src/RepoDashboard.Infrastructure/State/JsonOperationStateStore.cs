@@ -154,7 +154,7 @@ public sealed class JsonOperationStateStore : IOperationStateStore
 
     private sealed class OperationStateDocument
     {
-        public Dictionary<string, RepositoryOperationState?> Repositories { get; init; } = new();
+        public Dictionary<string, RepositoryOperationState?> Repositories { get; init; } = new(StringComparer.Ordinal);
     }
 
     private sealed class RepositoryOperationState

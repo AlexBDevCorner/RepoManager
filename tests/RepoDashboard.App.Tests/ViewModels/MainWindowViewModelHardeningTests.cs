@@ -488,9 +488,9 @@ public sealed class MainWindowViewModelHardeningTests
         // Completed row shows its terminal state; the pending row returns
         // to idle instead of being dropped or left spinning.
         sut.Repositories.Should().HaveCount(2);
-        sut.Repositories.First(r => r.Name == "Done").Activity
+        sut.Repositories.First(r => string.Equals(r.Name, "Done", StringComparison.Ordinal)).Activity
             .Should().Be(RepositoryActivity.Completed);
-        sut.Repositories.First(r => r.Name == "Pending").Activity
+        sut.Repositories.First(r => string.Equals(r.Name, "Pending", StringComparison.Ordinal)).Activity
             .Should().Be(RepositoryActivity.Idle);
         sut.StatusText.Should().Contain("cancelled");
         sut.StatusText.Should().Contain("1");
@@ -674,7 +674,7 @@ public sealed class MainWindowViewModelHardeningTests
     {
         var dashboard = new FakeDashboard
         {
-            AddFailureFor = path => path.EndsWith("RepoB")
+            AddFailureFor = path => path.EndsWith("RepoB", StringComparison.Ordinal)
                 ? new InvalidOperationException(
                     $"'{RepoPath("RepoB")}' is already on the dashboard as 'RepoB'.")
                 : null
@@ -707,7 +707,7 @@ public sealed class MainWindowViewModelHardeningTests
     {
         var dashboard = new FakeDashboard
         {
-            AddFailureFor = path => path.EndsWith("RepoB")
+            AddFailureFor = path => path.EndsWith("RepoB", StringComparison.Ordinal)
                 ? new InvalidOperationException(
                     $"'{RepoPath("RepoB")}' is already on the dashboard as 'RepoB'.")
                 : new InvalidOperationException(
@@ -740,7 +740,7 @@ public sealed class MainWindowViewModelHardeningTests
     {
         var dashboard = new FakeDashboard
         {
-            AddFailureFor = path => path.EndsWith("Viewer")
+            AddFailureFor = path => path.EndsWith("Viewer", StringComparison.Ordinal)
                 ? new InvalidOperationException(
                     $"'{RepoPath("Viewer")}' is already on the dashboard as 'Viewer'.")
                 : null

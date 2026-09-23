@@ -173,14 +173,14 @@ public sealed class RepositoryDiscoveryService : IRepositoryDiscoveryService
         {
             var attributes = File.GetAttributes(directory);
 
-            if ((attributes & FileAttributes.Hidden) != 0)
+            if ((attributes & FileAttributes.Hidden) == FileAttributes.Hidden)
             {
                 return true;
             }
 
             // Reparse points (junctions/symlinks) can create cycles or pull
             // enormous trees into the scan — skip them.
-            if ((attributes & FileAttributes.ReparsePoint) != 0)
+            if ((attributes & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint)
             {
                 return true;
             }

@@ -1,0 +1,33 @@
+<Project>
+  <!-- RM-011: Central Package Management. Versions live here; individual
+       PackageReference entries must not repeat Version attributes.
+       Existing versions are preserved; only new analyzer packages add entries. -->
+  <PropertyGroup>
+    <_IsControlProject Condition="$([System.String]::Copy('$(MSBuildProjectFullPath)').Replace('\', '/').Contains('/control/'))">true</_IsControlProject>
+    <ManagePackageVersionsCentrally Condition="'$(_IsControlProject)' != 'true'">true</ManagePackageVersionsCentrally>
+    <ManagePackageVersionsCentrally Condition="'$(_IsControlProject)' == 'true'">false</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled Condition="'$(_IsControlProject)' != 'true'">false</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(_IsControlProject)' != 'true'">
+    <PackageVersion Include="Avalonia" Version="12.1.2" />
+    <PackageVersion Include="Avalonia.Controls.DataGrid" Version="12.1.2" />
+    <PackageVersion Include="Avalonia.Desktop" Version="12.1.2" />
+    <PackageVersion Include="Avalonia.Fonts.Inter" Version="12.1.2" />
+    <PackageVersion Include="Avalonia.Headless" Version="12.1.2" />
+    <PackageVersion Include="Avalonia.Themes.Fluent" Version="12.1.2" />
+    <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
+    <PackageVersion Include="coverlet.collector" Version="6.0.4" />
+    <PackageVersion Include="FluentAssertions" Version="8.10.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageVersion Include="xunit" Version="2.9.3" />
+    <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <!-- New analyzer packages (development-only, PrivateAssets=all at the reference). -->
+    <PackageVersion Include="Meziantou.Analyzer" Version="3.0.284" />
+    <PackageVersion Include="xunit.analyzers" Version="1.27.0" />
+  </ItemGroup>
+</Project>
