@@ -1,3 +1,4 @@
+using System.Globalization;
 using RepoDashboard.Core.Git;
 using RepoDashboard.Core.Models;
 
@@ -53,7 +54,7 @@ public sealed class DivergenceCalculator : IDivergenceCalculator
         }
 
         return new Divergence(
-            Ahead: int.Parse(parts[0]),
-            Behind: int.Parse(parts[1]));
+            Ahead: int.Parse(parts[0], CultureInfo.InvariantCulture),
+            Behind: int.Parse(parts[1], CultureInfo.InvariantCulture));
     }
 }

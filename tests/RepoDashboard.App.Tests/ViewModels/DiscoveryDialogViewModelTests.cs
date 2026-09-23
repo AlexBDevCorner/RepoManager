@@ -35,7 +35,7 @@ public sealed class DiscoveryDialogViewModelTests
                 """C:\Source\Repos\Store"""
             });
 
-        var store = sut.Options.First(o => o.Name == "Store");
+        var store = sut.Options.First(o => string.Equals(o.Name, "Store", StringComparison.Ordinal));
         store.IsAlreadyTracked.Should().BeTrue();
         store.IsChecked.Should().BeFalse();
         store.IsSelectable.Should().BeFalse();
@@ -127,13 +127,13 @@ public sealed class DiscoveryDialogViewModelTests
         sut.ToggleSelectedCommand.CanExecute(null).Should().BeFalse(
             "nothing is highlighted");
 
-        sut.SelectedOption = sut.Options.First(o => o.Name == "Store");
+        sut.SelectedOption = sut.Options.First(o => string.Equals(o.Name, "Store", StringComparison.Ordinal));
         sut.ToggleSelectedCommand.CanExecute(null).Should().BeFalse(
             "already-tracked rows are not selectable");
 
         // Disabled command must not flip anything even if executed.
         sut.ToggleSelectedCommand.Execute(null);
-        sut.Options.First(o => o.Name == "Store").IsChecked.Should().BeFalse();
+        sut.Options.First(o => string.Equals(o.Name, "Store", StringComparison.Ordinal)).IsChecked.Should().BeFalse();
     }
 
     [Fact]
@@ -148,7 +148,7 @@ public sealed class DiscoveryDialogViewModelTests
                 """C:\Source\Repos\Store"""
             });
 
-        sut.SelectedOption.Should().Be(sut.Options.First(o => o.Name == "Viewer"));
+        sut.SelectedOption.Should().Be(sut.Options.First(o => string.Equals(o.Name, "Viewer", StringComparison.Ordinal)));
         sut.ToggleSelectedCommand.CanExecute(null).Should().BeTrue();
     }
 
@@ -187,12 +187,12 @@ public sealed class DiscoveryDialogViewModelTests
             {
                 """C:\Source\Repos\Store"""
             });
-        sut.Options.First(o => o.Name == "Viewer").IsChecked = false;
+        sut.Options.First(o => string.Equals(o.Name, "Viewer", StringComparison.Ordinal)).IsChecked = false;
 
         sut.SelectAllCommand.Execute(null);
 
-        sut.Options.First(o => o.Name == "Viewer").IsChecked.Should().BeTrue();
-        sut.Options.First(o => o.Name == "Store").IsChecked.Should().BeFalse();
+        sut.Options.First(o => string.Equals(o.Name, "Viewer", StringComparison.Ordinal)).IsChecked.Should().BeTrue();
+        sut.Options.First(o => string.Equals(o.Name, "Store", StringComparison.Ordinal)).IsChecked.Should().BeFalse();
         sut.SelectedPaths.Should().BeEquivalentTo("""C:\Source\Repos\Viewer""");
     }
 

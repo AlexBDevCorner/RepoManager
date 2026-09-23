@@ -286,7 +286,7 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
         var third = Config("Third", """C:\Source\Repos\Third""");
         var store = new InMemoryStore([first, broken, third]);
         var inspector = new StubInspector(c =>
-            c.Name == "Broken"
+            string.Equals(c.Name, "Broken", StringComparison.Ordinal)
                 ? throw new InvalidOperationException("git status unexpectedly failed")
                 : UpToDateSnapshot(c));
         var sut = CreateSut(store, inspector);
@@ -534,7 +534,7 @@ public sealed class RepositoryDashboardServiceTests : IDisposable
         var third = Config("Third", """C:\Source\Repos\Third""");
         var store = new InMemoryStore([first, broken, third]);
         var inspector = new StubInspector(UpToDateSnapshot);
-        var fetcher = new StubFetcher(c => c.Name == "Broken"
+        var fetcher = new StubFetcher(c => string.Equals(c.Name, "Broken", StringComparison.Ordinal)
             ? new RepositoryOperationResult
             {
                 Success = false,

@@ -346,13 +346,13 @@ public sealed class MainWindowXamlTests
             .ToList() ?? [];
 
         bindings
-            .Where(b => GestureValue(b) == "Space" && CommandValue(b).Contains("ToggleSelectedCommand"))
+            .Where(b => string.Equals(GestureValue(b), "Space", StringComparison.Ordinal) && CommandValue(b).Contains("ToggleSelectedCommand", StringComparison.Ordinal))
             .Should().ContainSingle();
         bindings
-            .Where(b => GestureValue(b) == "Ctrl+A" && CommandValue(b).Contains("SelectAllCommand"))
+            .Where(b => string.Equals(GestureValue(b), "Ctrl+A", StringComparison.Ordinal) && CommandValue(b).Contains("SelectAllCommand", StringComparison.Ordinal))
             .Should().ContainSingle();
         bindings
-            .Where(b => GestureValue(b) == "Ctrl+Shift+A" && CommandValue(b).Contains("ClearSelectionCommand"))
+            .Where(b => string.Equals(GestureValue(b), "Ctrl+Shift+A", StringComparison.Ordinal) && CommandValue(b).Contains("ClearSelectionCommand", StringComparison.Ordinal))
             .Should().ContainSingle();
 
         var checkBox = document

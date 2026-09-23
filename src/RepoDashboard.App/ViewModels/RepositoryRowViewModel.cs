@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using CommunityToolkit.Mvvm.ComponentModel;
 using RepoDashboard.Core.Dashboard;
 using RepoDashboard.Core.Models;
@@ -235,7 +236,7 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
         }
 
         LastFetchText = FormatLastFetch(_lastItem.LastSuccessfulFetch);
-        DetailsLastFetch = _lastItem.LastSuccessfulFetch?.ToLocalTime().ToString("g") ?? "Never";
+        DetailsLastFetch = _lastItem.LastSuccessfulFetch?.ToLocalTime().ToString("g", CultureInfo.CurrentCulture) ?? "Never";
         MapStaleness(_lastItem.LastSuccessfulFetch);
     }
 
@@ -324,7 +325,7 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
             DetailsWorkingTree = "Error";
         }
 
-        DetailsLastFetch = item.LastSuccessfulFetch?.ToLocalTime().ToString("g") ?? "Never";
+        DetailsLastFetch = item.LastSuccessfulFetch?.ToLocalTime().ToString("g", CultureInfo.CurrentCulture) ?? "Never";
         DetailsLastOperation = DescribeLastOperation(item);
         DetailsGitError = item.InspectionError
             ?? item.FetchError
@@ -519,6 +520,6 @@ public sealed partial class RepositoryRowViewModel : ObservableObject
             return $"{(int)age.TotalDays} d ago";
         }
 
-        return lastFetch.Value.ToLocalTime().ToString("d");
+        return lastFetch.Value.ToLocalTime().ToString("d", CultureInfo.CurrentCulture);
     }
 }

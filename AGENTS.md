@@ -44,16 +44,22 @@ Dependency direction: `App -> Core`, `App -> Infrastructure`,
 ## Build / test / run (Windows and Linux)
 
 ```powershell
-dotnet build RepoDashboard.slnx
-dotnet test RepoDashboard.slnx
+dotnet restore RepoDashboard.slnx --locked-mode
+dotnet build RepoDashboard.slnx --configuration Release --no-restore
+dotnet test RepoDashboard.slnx --configuration Release --no-build --no-restore
+dotnet format RepoDashboard.slnx --verify-no-changes --no-restore
 dotnet run --project src/RepoDashboard.App
 ```
 
 - .NET 10 SDK, no `global.json`. Self-contained publish:
   `dotnet publish src/RepoDashboard.App -c Release -r win-x64 --self-contained true`
   Linux: `dotnet publish src/RepoDashboard.App -c Release -r linux-x64 --self-contained true`
-- `dotnet test RepoDashboard.slnx` (full suite) is **required verification**
-  for every behavior change. Quote commands + results in the PR.
+- The restore/build/test/format sequence above is **required verification**
+  for every behavior change (same gates as CI). Quote commands + results in the PR.
+- Build configuration (`Directory.Build.props`, `Directory.Packages.props`,
+  `.editorconfig`, package lock files) is the source of truth for
+  target framework, analyzers, versions, and formatting; do not duplicate
+  those rules here.
 
 ## Architecture rules (normative, see `docs/07-architectural-rules.md`)
 
