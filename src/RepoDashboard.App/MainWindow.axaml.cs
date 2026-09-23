@@ -1,5 +1,8 @@
+using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using RepoDashboard.App.ViewModels;
 
 namespace RepoDashboard.App;
@@ -73,5 +76,71 @@ public partial class MainWindow : Window
 
             Dispatcher.UIThread.Post(() => grid.Focus());
         };
+    }
+
+    /// <summary>
+    /// RM-009: double-clicking a repository row opens that repository's
+    /// folder through the existing <c>OpenFolderCommand</c>. Code-behind
+    /// only translates the pointer gesture into the existing command: path
+    /// validation and launching stay owned by the view model/service.
+    /// A double-click outside a row (or without a valid target) does
+    /// nothing and never throws; single-click selection is untouched.
+    /// </summary>
+    private void OnRepositoryGridDoubleTapped(object? sender, TappedEventArgs e) =>
+        HandleDoubleTappedSource(e.Source);
+
+    /// <summary>
+    /// RM-009: translates a double-tap source into the existing
+    /// <c>OpenFolderCommand</c>. Separated from the event signature so the
+    /// gesture-to-command translation is unit-testable without synthesizing
+    /// pointer events. Never throws for missing/invalid targets.
+    /// </summary>
+    public void HandleDoubleTappedSource(object? source)
+    {
+        var viewModel = _viewModel ?? DataContext as MainWindowViewModel;
+
+        if (viewModel is null)
+        {
+            return;
+        }
+
+        var target = TryResolveDoubleClickedRepository(source);
+
+        if (target is null)
+        {
+            return;
+        }
+
+        if (viewModel.OpenFolderCommand.CanExecute(target))
+        {
+            viewModel.OpenFolderCommand.Execute(target);
+        }
+    }
+
+    /// <summary>
+    /// RM-009: resolves the repository row that produced a pointer gesture
+    /// by walking the visual ancestors for a
+    /// <see cref="RepositoryRowViewModel"/> data context. Returns
+    /// <c>null</c> for empty grid space, headers, or any non-row source so
+    /// the caller can no-op instead of throwing.
+    /// </summary>
+    public static RepositoryRowViewModel? TryResolveDoubleClickedRepository(
+        object? source)
+    {
+        if (source is not Visual visual)
+        {
+            return null;
+        }
+
+        foreach (var ancestor in visual.GetSelfAndVisualAncestors())
+        {
+            if (ancestor is StyledElement element
+                && element.DataContext is RepositoryRowViewModel row)
+            {
+                return row;
+            }
+        }
+
+        return null;
     }
 }
