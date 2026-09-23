@@ -215,7 +215,18 @@ jobs:
             After all required verification has run and the task is genuinely ready, explicitly mark the PR ready for review
             (for example with gh pr ready <number>) before finishing. Do not report success while the PR remains draft.
             For correction: check out the existing autonomous/${{ inputs.task_id }} branch.
-            Read blocking-review.json in RUNNER_TEMP. Fix only blocking findings from that review.
+            Read blocking-review.json in RUNNER_TEMP. Evaluate every blocking finding from that review.
+            Normally fix all valid blocking findings and do not implement unrelated work.
+            If you materially disagree with a blocking finding because it is technically incorrect,
+            contradicts the authoritative task, or would make the implementation worse, STOP the correction
+            instead of changing code merely to satisfy the reviewer. Leave the reviewed head unchanged and
+            post exactly one top-level PR comment with this machine-readable form:
+            <!-- autonomous-review-disagreement:v1 -->
+            Review-ID: ${{ inputs.review_id }}
+            Reviewed-SHA: ${{ inputs.expected_head }}
+            Reason: <concise technical explanation of the disagreement>
+            Do not use disagreement because a fix is difficult or time-consuming; it is only for a genuine
+            technical disagreement that needs human resolution.
             The reviewed head is ${{ inputs.expected_head }}. Do not implement unrelated work.
             Required verification: dotnet build RepoDashboard.slnx and dotnet test RepoDashboard.slnx.
             Record real commands and results. Add tests for behavior changes.
