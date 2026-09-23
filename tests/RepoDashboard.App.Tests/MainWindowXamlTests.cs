@@ -251,6 +251,7 @@ public sealed class MainWindowXamlTests
     [InlineData("OpenFolderCommand", "Enter")]
     [InlineData("OpenTerminalCommand", "Ctrl+Enter")]
     [InlineData("CopyPathCommand", "Ctrl+Shift+C")]
+    [InlineData("CopyBranchCommand", "Ctrl+Shift+B")]
     public void MainWindow_toolbar_tooltip_reveals_shortcut(
         string command,
         string gesture)
@@ -267,6 +268,59 @@ public sealed class MainWindowXamlTests
 
         button.Should().NotBeNull($"expected toolbar button for {command}");
         button!.Attribute("ToolTip.Tip")?.Value.Should().Contain(gesture);
+    }
+
+    [Fact]
+    public void MainWindow_toolbar_places_copy_branch_next_to_copy_path()
+    {
+        // RM-010: Copy Branch joins the main toolbar next to Copy Path and
+        // reuses the existing CopyBranchCommand (no second clipboard path).
+        // Toolbar buttons carry no CommandParameter so a null parameter
+        // means "use the selection", preserving the existing enable/disable
+        // behavior via CanCopyBranch.
+        var document = LoadMainWindow();
+
+        var toolbar = document
+            .Descendants(Avalonia + "StackPanel")
+            .First(p => string.Equals(
+                p.Attribute("DockPanel.Dock")?.Value, "Top",
+                StringComparison.Ordinal));
+
+        var buttons = toolbar
+            .Elements(Avalonia + "Button")
+            .ToList();
+
+        var copyPathIndex = buttons.FindIndex(b =>
+            (b.Attribute("Command")?.Value ?? string.Empty).Contains(
+                "CopyPathCommand", StringComparison.Ordinal));
+        var copyBranchIndex = buttons.FindIndex(b =>
+            (b.Attribute("Command")?.Value ?? string.Empty).Contains(
+                "CopyBranchCommand", StringComparison.Ordinal));
+
+        copyPathIndex.Should().BeGreaterThanOrEqualTo(0, "expected a Copy Path toolbar button");
+        copyBranchIndex.Should().BeGreaterThanOrEqualTo(0, "expected a Copy Branch toolbar button");
+        copyBranchIndex.Should().Be(
+            copyPathIndex + 1,
+            "Copy Branch must sit directly next to Copy Path so related utility actions stay grouped");
+
+        var copyBranch = buttons[copyBranchIndex];
+        copyBranch.Attribute("Content")?.Value.Should().Be("Copy Branch");
+        copyBranch.Attribute("ToolTip.Tip")?.Value.Should().Contain("Ctrl+Shift+B");
+        copyBranch.Attribute("CommandParameter").Should().BeNull(
+            "toolbar Copy Branch must use the selection, matching Copy Path");
+        copyBranch.Attribute("Margin")?.Value.Should().Be(
+            buttons[copyPathIndex].Attribute("Margin")?.Value,
+            "Copy Branch must match the style/spacing of the neighboring utility-action buttons");
+
+        // The context-menu action and its shortcut stay untouched.
+        var menuItem = document
+            .Descendants(Avalonia + "MenuItem")
+            .FirstOrDefault(m =>
+                string.Equals(m.Attribute("Header")?.Value, "Copy Branch", StringComparison.Ordinal));
+
+        menuItem.Should().NotBeNull("the context-menu Copy Branch action must be preserved");
+        menuItem!.Attribute("Command")?.Value.Should().Contain("CopyBranchCommand");
+        menuItem.Attribute("InputGesture")?.Value.Should().Be("Ctrl+Shift+B");
     }
 
     [Fact]

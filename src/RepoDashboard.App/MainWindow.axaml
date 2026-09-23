@@ -103,6 +103,10 @@
               Command="{Binding CopyPathCommand}"
               ToolTip.Tip="Copy repository path (Ctrl+Shift+C)"
               Margin="4,0" />
+      <Button Content="Copy Branch"
+              Command="{Binding CopyBranchCommand}"
+              ToolTip.Tip="Copy branch name (Ctrl+Shift+B)"
+              Margin="4,0" />
     </StackPanel>
 
     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="8,4">
