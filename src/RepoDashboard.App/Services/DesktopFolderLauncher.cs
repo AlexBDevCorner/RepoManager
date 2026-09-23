@@ -20,7 +20,7 @@ public sealed class DesktopFolderLauncher : IFolderLauncher
                 Process.Start(new ProcessStartInfo
                 {
                     FileName = path,
-                    UseShellExecute = false
+                    UseShellExecute = true
                 });
                 return;
             }
